@@ -1,0 +1,29 @@
+# Dockerfile for FOLIO Baseline White Agent (No Vampire needed)
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml ./
+COPY src/ ./src/
+COPY main.py ./
+
+# Install Python dependencies (no need for Vampire-related packages)
+RUN pip install --no-cache-dir \
+    a2a-sdk[http-server]>=0.3.8 \
+    litellm>=1.0.0 \
+    pandas>=2.0.0 \
+    typer>=0.9.0 \
+    uvicorn>=0.27.0 \
+    python-dotenv>=1.0.0
+
+# Expose port for the agent
+EXPOSE 8080
+
+# Set environment variables for AgentBeats
+ENV HOST=0.0.0.0
+
+# Start the baseline white agent
+# Use PORT environment variable from Cloud Run, default to 8080
+CMD python -c "import sys; import os; sys.path.insert(0, '.'); from src.white_agent_baseline.agent import start_baseline_white_agent; port = int(os.environ.get('PORT', 8080)); print(f'Starting baseline agent on port {port}'); start_baseline_white_agent(host='0.0.0.0', port=port)"
+

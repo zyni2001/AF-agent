@@ -1,0 +1,17 @@
+name = "FOLIO Logical Reasoning Benchmark"
+description = "Evaluates agents on first-order logic inference tasks from the FOLIO dataset. Tests ability to determine if conclusions logically follow from premises."
+version = "1.0.0"
+
+defaultInputModes = ["text"]
+defaultOutputModes = ["text"]
+
+[capabilities]
+streaming = false
+
+[[skills]]
+id = "folio_evaluation"
+name = "FOLIO Evaluation"
+description = "Assess agent performance on logical reasoning and inference tasks"
+tags = ["benchmark", "evaluation", "logic", "reasoning", "FOL"]
+examples = []
+
