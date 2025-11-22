@@ -1,0 +1,35 @@
+# Autoformalization White Agent - Z3 Code Generation
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml ./
+COPY src/ ./src/
+COPY main.py ./
+COPY run.sh ./
+
+# Install dependencies (including z3-solver)
+RUN pip install --no-cache-dir \
+    a2a-sdk[http-server]>=0.3.8 \
+    earthshaker>=0.1.0 \
+    litellm>=1.0.0 \
+    pandas>=2.0.0 \
+    typer>=0.9.0 \
+    uvicorn>=0.27.0 \
+    python-dotenv>=1.0.0 \
+    z3-solver>=4.12.0
+
+# Expose port
+EXPOSE 8080
+
+# Environment variables
+ENV HOST=0.0.0.0
+ENV AGENT_ROLE=autoform
+
+# Make run.sh executable
+RUN chmod +x run.sh
+
+# Start with AgentBeats controller
+CMD ["agentbeats", "run_ctrl"]
+
