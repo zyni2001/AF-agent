@@ -1,9 +1,10 @@
-"""Autoformalization white agent - LLM converts NL to FOL, then Vampire verifies."""
+"""Autoformalization white agent - LLM generates Z3 Python code and executes it."""
 
 import uvicorn
 import os
-import re
 import sys
+import tempfile
+import subprocess
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -16,17 +17,13 @@ from litellm import completion
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.folio_utils.vampire_runner import check_folio_with_vampire
-from src.folio_utils.dataset import parse_premises
 
-
-# Get Gemini API keys from environment (comma-separated for rotation)
+# Get Gemini API keys from environment
 def get_api_keys_from_env():
     """Load API keys from GEMINI_API_KEY environment variable."""
     api_key = os.environ.get('GEMINI_API_KEY', '')
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
-    # Support comma-separated keys for rotation
     return [key.strip() for key in api_key.split(',') if key.strip()]
 
 GEMINI_API_KEYS = get_api_keys_from_env()
@@ -43,15 +40,15 @@ def get_next_api_key():
 
 def prepare_white_agent_card(url):
     skill = AgentSkill(
-        id="autoformalization_reasoning",
-        name="Autoformalization + Logical Verification",
-        description="Converts natural language to FOL and uses Vampire theorem prover for verification",
-        tags=["reasoning", "logic", "autoformalization", "theorem-proving"],
+        id="z3_logical_reasoning",
+        name="Z3 Autoformalization",
+        description="Generates executable Z3 Python code to solve logical reasoning problems",
+        tags=["reasoning", "logic", "autoformalization", "z3"],
         examples=[],
     )
     card = AgentCard(
-        name="autoform_reasoning_agent",
-        description="Agent that automates formalization (NL→FOL) and uses theorem provers for logical verification",
+        name="z3_autoformalization_agent",
+        description="Autoformalization agent that generates and executes Z3 Python code for logical reasoning",
         url=url,
         version="1.0.0",
         default_input_modes=["text/plain"],
@@ -62,112 +59,92 @@ def prepare_white_agent_card(url):
     return card
 
 
-def extract_premises_and_conclusion(nl_text: str) -> tuple:
-    """Extract premises and conclusion from natural language problem text.
-    
-    Returns:
-        (premises_text, conclusion_text)
-    """
-    # Look for "Given the following premises:" and "Does the following conclusion"
-    premises_match = re.search(r'Given the following premises:\s*(.*?)\s*Does the following conclusion', 
-                               nl_text, re.DOTALL | re.IGNORECASE)
-    conclusion_match = re.search(r'Conclusion:\s*(.*?)\s*(?:Please answer|Your answer)', 
-                                 nl_text, re.DOTALL | re.IGNORECASE)
-    
-    if premises_match and conclusion_match:
-        premises_text = premises_match.group(1).strip()
-        conclusion_text = conclusion_match.group(1).strip()
-        return premises_text, conclusion_text
-    
-    # Fallback: try simpler patterns
-    parts = nl_text.split("Conclusion:")
-    if len(parts) >= 2:
-        premises_text = parts[0].strip()
-        conclusion_text = parts[1].split("Please answer")[0].split("Your answer")[0].strip()
-        return premises_text, conclusion_text
-    
-    return None, None
-
-
-def parse_fol_response(llm_response: str) -> tuple:
-    """Parse LLM response to extract premises-FOL and conclusion-FOL.
-    
-    Returns:
-        (premises_fol_list, conclusion_fol)
-    """
-    # Look for PREMISES-FOL: and CONCLUSION-FOL: sections
-    premises_match = re.search(r'PREMISES-FOL:\s*(.*?)\s*CONCLUSION-FOL:', 
-                               llm_response, re.DOTALL | re.IGNORECASE)
-    conclusion_match = re.search(r'CONCLUSION-FOL:\s*(.*?)(?:\n\n|\Z)', 
-                                 llm_response, re.DOTALL | re.IGNORECASE)
-    
-    if premises_match and conclusion_match:
-        premises_text = premises_match.group(1).strip()
-        conclusion_text = conclusion_match.group(1).strip()
-        
-        # Split premises by newlines
-        premises_list = [p.strip() for p in premises_text.split('\n') if p.strip()]
-        
-        return premises_list, conclusion_text
-    
-    return None, None
-
-
 class AutoformWhiteAgentExecutor(AgentExecutor):
     def __init__(self):
         self.ctx_id_to_messages = {}
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        # Get user input
-        user_input = context.get_user_input()
-        
-        print(f"\n{'='*60}")
-        print("Autoform agent: Processing request")
-        print(f"{'='*60}\n")
+        """Execute autoformalization reasoning using Z3 code generation."""
         
         try:
-            # Extract premises and conclusion from natural language
-            premises_nl, conclusion_nl = extract_premises_and_conclusion(user_input)
+            # Get user input
+            user_input = context.get_user_input()
             
-            if not premises_nl or not conclusion_nl:
-                error_msg = "ERROR: Could not extract premises and conclusion from input"
-                print(f"Autoform agent: {error_msg}")
-                print(f"Autoform agent: Returning Uncertain due to extraction failure")
-                await event_queue.enqueue_event(
-                    new_agent_text_message("Uncertain", context_id=context.context_id)
-                )
-                return
+            print(f"\n{'='*60}")
+            print(f"Autoform agent: Processing request")
+            print(f"{'='*60}\n")
             
-            print(f"Extracted premises (NL):\n{premises_nl[:200]}...")
-            print(f"\nExtracted conclusion (NL):\n{conclusion_nl[:200]}...")
+            # Create prompt for Z3 code generation
+            system_prompt = """You are an expert in formal logic and Z3 SMT solver.
+
+Given a logical reasoning problem with premises and a conclusion, generate executable Python code using the Z3 library that:
+1. Encodes the premises and conclusion as Z3 formulas
+2. Checks if the conclusion logically follows from the premises
+3. Prints EXACTLY one of: "True", "False", or "Uncertain"
+
+Requirements:
+- Use the z3 library (import from z3 import *)
+- Define all predicates and constants appropriately
+- Check satisfiability to determine the answer:
+  * If premises + ¬conclusion is UNSAT → print "True"
+  * If premises + conclusion is UNSAT → print "False"  
+  * Otherwise → print "Uncertain"
+- The last line of output must be EXACTLY "True", "False", or "Uncertain"
+- Do NOT include any explanation, only the executable code
+
+Example structure:
+```python
+from z3 import *
+
+# Define sorts and predicates
+Object = DeclareSort('Object')
+P = Function('P', Object, BoolSort())
+# ... more definitions
+
+# Define constants
+x = Const('x', Object)
+
+# Encode premises
+premises = [
+    # your premises here
+]
+
+# Encode conclusion
+conclusion = # your conclusion here
+
+# Check: premises + ¬conclusion
+solver1 = Solver()
+for p in premises:
+    solver1.add(p)
+solver1.add(Not(conclusion))
+
+if solver1.check() == unsat:
+    print("True")
+elif solver1.check() == sat:
+    # Check premises + conclusion
+    solver2 = Solver()
+    for p in premises:
+        solver2.add(p)
+    solver2.add(conclusion)
+    if solver2.check() == unsat:
+        print("False")
+    else:
+        print("Uncertain")
+else:
+    print("Uncertain")
+```
+
+Now generate the code for the following problem:"""
+
+            user_prompt = f"{user_input}\n\nGenerate the complete executable Z3 Python code:"
             
-            # Stage 1: Autoformalization (LLM converts NL → FOL)
-            print("\n--- Stage 1: Autoformalization (NL → FOL) ---")
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
             
-            autoform_prompt = f"""Convert the following natural language premises and conclusion into First-Order Logic (FOL) format.
-
-Be precise and use standard FOL syntax:
-- Use ∀ for universal quantification, ∃ for existential quantification
-- Use ∧ for AND, ∨ for OR, → for implication, ¬ for negation
-- Use predicates like Person(x), Loves(x,y), etc.
-
-Premises:
-{premises_nl}
-
-Conclusion:
-{conclusion_nl}
-
-Provide your answer in EXACTLY this format (do not add any other text):
-
-PREMISES-FOL:
-<premise1 in FOL>
-<premise2 in FOL>
-...
-
-CONCLUSION-FOL:
-<conclusion in FOL>"""
-
-            # Call LLM with retry logic
+            # Call LLM to generate Z3 code
+            print("Generating Z3 Python code...")
             response = None
             last_error = None
             
@@ -177,10 +154,10 @@ CONCLUSION-FOL:
                     os.environ['GEMINI_API_KEY'] = api_key
                     
                     response = completion(
-                        messages=[{"role": "user", "content": autoform_prompt}],
-                        model="gemini/gemini-2.5-flash",
-                        temperature=0.0,
-                        max_tokens=2000,
+                        messages=messages,
+                        model="gemini/gemini-2.0-flash-exp",
+                        api_key=api_key,
+                        temperature=0.0
                     )
                     break
                 except Exception as e:
@@ -189,91 +166,82 @@ CONCLUSION-FOL:
                     continue
             
             if response is None:
-                error_msg = f"ERROR: All API keys failed during autoformalization. Last error: {last_error}"
+                error_msg = f"ERROR: All API keys failed. Last error: {last_error}"
                 print(f"Autoform agent: {error_msg}")
                 await event_queue.enqueue_event(
                     new_agent_text_message("Uncertain", context_id=context.context_id)
                 )
                 return
             
-            # Extract FOL formulas from response
-            fol_response = response.choices[0].message.content
-            
-            # Handle None response
-            if fol_response is None:
-                error_msg = "ERROR: LLM returned None content"
-                print(f"Autoform agent: {error_msg}")
+            z3_code = response.choices[0].message.content
+            if z3_code is None:
+                print("Autoform agent: ERROR: LLM returned None content")
                 await event_queue.enqueue_event(
                     new_agent_text_message("Uncertain", context_id=context.context_id)
                 )
                 return
             
-            print(f"\nLLM autoformalization response:\n{fol_response[:500]}...")
+            # Extract code from markdown if present
+            if "```python" in z3_code:
+                z3_code = z3_code.split("```python")[1].split("```")[0].strip()
+            elif "```" in z3_code:
+                z3_code = z3_code.split("```")[1].split("```")[0].strip()
             
-            premises_fol, conclusion_fol = parse_fol_response(fol_response)
+            print(f"\nGenerated Z3 code ({len(z3_code)} chars)")
+            print(f"First 200 chars: {z3_code[:200]}...\n")
             
-            if not premises_fol or not conclusion_fol:
-                error_msg = "ERROR: Could not parse FOL formulas from LLM response"
-                print(f"Autoform agent: {error_msg}")
-                print(f"Full response: {fol_response}")
-                await event_queue.enqueue_event(
-                    new_agent_text_message("Uncertain", context_id=context.context_id)
+            # Execute the Z3 code
+            print("Executing Z3 code...")
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                f.write(z3_code)
+                temp_file = f.name
+            
+            try:
+                result = subprocess.run(
+                    ['python', temp_file],
+                    capture_output=True,
+                    text=True,
+                    timeout=60  # 60 second timeout
                 )
-                return
-            
-            print(f"\nParsed {len(premises_fol)} premises in FOL")
-            print(f"Conclusion in FOL: {conclusion_fol[:100]}...")
-            
-            # Stage 2: Logical Verification (Vampire)
-            print("\n--- Stage 2: Logical Verification (Vampire) ---")
-            
-            vampire_path = os.environ.get('VAMPIRE_PATH')
-            if not vampire_path:
-                # Try default location
-                vampire_path = '/home/argustest/logic-reasoning-workspace/zhiyu/folio-agent/folio_correction/vampire/build/vampire'
-            
-            print(f"Running Vampire theorem prover...")
-            print(f"Vampire path: {vampire_path}")
-            
-            result = check_folio_with_vampire(
-                premises_fol=premises_fol,
-                conclusion_fol=conclusion_fol,
-                time_limit=50,
-                vampire_path=vampire_path
-            )
-            
-            print(f"Vampire status: {result['vampire_status']}")
-            
-            # Check for parse errors
-            if result.get('has_parse_error'):
-                error_msg = f"PARSE ERROR in TPTP: {result.get('parse_error_msg', 'Unknown error')}"
-                print(f"Autoform agent: {error_msg}")
-                await event_queue.enqueue_event(
-                    new_agent_text_message("Uncertain", context_id=context.context_id)
-                )
-                return
-            
-            # Determine final answer
-            predicted_label = result['predicted_label']
-            
-            if predicted_label is True:
-                answer = "True"
-                print("✓ Vampire verdict: Conclusion FOLLOWS from premises")
-            elif predicted_label is False:
-                answer = "False"
-                print("✗ Vampire verdict: Conclusion does NOT follow from premises")
-            else:
+                
+                output = result.stdout.strip()
+                stderr = result.stderr.strip()
+                
+                print(f"Execution return code: {result.returncode}")
+                print(f"Stdout: {output[:200] if output else '(empty)'}")
+                if stderr:
+                    print(f"Stderr: {stderr[:200]}")
+                
+                # Parse the result from the last line
+                lines = output.split('\n') if output else []
                 answer = "Uncertain"
-                print("? Vampire verdict: Cannot determine (timeout or insufficient information)")
-            
-            print(f"\n{'='*60}")
-            print(f"Final answer: {answer}")
-            print(f"{'='*60}\n")
-            
-            # Send response
-            await event_queue.enqueue_event(
-                new_agent_text_message(answer, context_id=context.context_id)
-            )
+                
+                for line in reversed(lines):
+                    line = line.strip()
+                    if line in ["True", "False", "Uncertain"]:
+                        answer = line
+                        break
+                
+                if result.returncode != 0:
+                    print(f"Warning: Z3 code execution failed with return code {result.returncode}")
+                    if stderr:
+                        print(f"Error: {stderr[:500]}")
+                    answer = "Uncertain"
+                
+                print(f"\n{'='*60}")
+                print(f"Final answer: {answer}")
+                print(f"{'='*60}\n")
+                
+                # Send response
+                await event_queue.enqueue_event(
+                    new_agent_text_message(answer, context_id=context.context_id)
+                )
+                
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
             
         except Exception as e:
             # Catch-all for any unexpected errors
@@ -290,8 +258,17 @@ CONCLUSION-FOL:
 
 
 def start_autoform_white_agent(host="localhost", port=9003):
-    print("Starting autoformalization white agent (LLM→FOL→Vampire)...")
-    url = f"http://{host}:{port}"
+    print("Starting autoformalization white agent (LLM→Z3 Code→Execute)...")
+    
+    # Use public URL from environment if available (for Cloud Run)
+    public_url = os.environ.get("PUBLIC_URL")
+    if public_url:
+        url = public_url
+        print(f"Using public URL from environment: {url}")
+    else:
+        url = f"http://{host}:{port}"
+        print(f"Using local URL: {url}")
+    
     card = prepare_white_agent_card(url)
 
     request_handler = DefaultRequestHandler(
@@ -299,10 +276,21 @@ def start_autoform_white_agent(host="localhost", port=9003):
         task_store=InMemoryTaskStore(),
     )
 
-    app = A2AStarletteApplication(
+    # Create Starlette application
+    app_builder = A2AStarletteApplication(
         agent_card=card,
         http_handler=request_handler,
     )
+    
+    starlette_app = app_builder.build()
+    
+    # Add health check endpoint for AgentBeats
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+    
+    async def health_check(request):
+        return JSONResponse({"status": "ok", "agent": "z3_autoformalization_agent"})
+    
+    starlette_app.routes.append(Route("/status", health_check))
 
-    uvicorn.run(app.build(), host=host, port=port)
-
+    uvicorn.run(starlette_app, host=host, port=port)

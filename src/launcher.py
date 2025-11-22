@@ -56,7 +56,7 @@ async def launch_evaluation(max_examples: int = None, test_both: bool = True):
         agents_to_test.append(("Baseline (Direct LLM)", baseline_url))
     
     # Start autoformalization white agent
-    print(f"Step {'2b' if test_both else '2'}: Launching autoformalization white agent (LLM→FOL→Vampire)...")
+    print(f"Step {'2b' if test_both else '2'}: Launching autoformalization white agent (LLM→FOL→Z3)...")
     autoform_address = ("localhost", 9003)
     autoform_url = f"http://{autoform_address[0]}:{autoform_address[1]}"
     p_autoform = multiprocessing.Process(
@@ -67,7 +67,7 @@ async def launch_evaluation(max_examples: int = None, test_both: bool = True):
     print(f"  Waiting for autoform agent to be ready at {autoform_url}...")
     assert await my_a2a.wait_agent_ready(autoform_url, timeout=30), "Autoform agent not ready in time"
     print("  ✓ Autoformalization agent is ready.\n")
-    agents_to_test.append(("Autoformalization (LLM→FOL→Vampire)", autoform_url))
+    agents_to_test.append(("Autoformalization (LLM→FOL→Z3)", autoform_url))
     
     # Evaluate each agent
     print("="*70)

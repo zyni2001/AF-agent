@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# AgentBeats controller launcher script
+# The controller will call this script to start the agent
+
+set -euo pipefail
+
+# Read environment variables
+HOST=${HOST:-0.0.0.0}
+PORT=${AGENT_PORT:-${PORT:-8080}}
+ROLE=${AGENT_ROLE:-green}
+
+echo "====================================="
+echo "Starting ${ROLE} agent"
+echo "Host: ${HOST}"
+echo "Port: ${PORT}"
+echo "====================================="
+
+# Launch the appropriate agent based on AGENT_ROLE
+case "${ROLE}" in
+  green)
+    echo "Launching Green Agent (FOLIO Evaluator)..."
+    exec python -c "import os,sys; sys.path.insert(0,'.'); from src.green_agent.agent import start_green_agent; start_green_agent(host='${HOST}', port=${PORT})"
+    ;;
+  baseline)
+    echo "Launching Baseline White Agent..."
+    exec python -c "import os,sys; sys.path.insert(0,'.'); from src.white_agent_baseline.agent import start_baseline_white_agent; start_baseline_white_agent(host='${HOST}', port=${PORT})"
+    ;;
+  autoform)
+    echo "Launching Z3 Autoformalization White Agent..."
+    exec python -c "import os,sys; sys.path.insert(0,'.'); from src.white_agent_autoform.agent import start_autoform_white_agent; start_autoform_white_agent(host='${HOST}', port=${PORT})"
+    ;;
+  *)
+    echo "ERROR: Unknown AGENT_ROLE='${ROLE}'" >&2
+    echo "Valid roles: green, baseline, autoform" >&2
+    exit 1
+    ;;
+esac
+

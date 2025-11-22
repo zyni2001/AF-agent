@@ -1,5 +1,5 @@
 # Dockerfile for FOLIO Green Agent (Evaluator/Assessor)
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
@@ -7,10 +7,15 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY src/ ./src/
 COPY main.py ./
+COPY run.sh ./
+
+# Copy data directory
+COPY data/ ./data/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir \
     a2a-sdk[http-server]>=0.3.8 \
+    earthshaker>=0.1.0 \
     litellm>=1.0.0 \
     pandas>=2.0.0 \
     typer>=0.9.0 \
@@ -22,8 +27,12 @@ EXPOSE 8080
 
 # Set environment variables
 ENV HOST=0.0.0.0
+ENV AGENT_ROLE=green
 
-# Start the green agent
-# Use PORT environment variable from Cloud Run, default to 8080
-CMD python -c "import sys; import os; sys.path.insert(0, '.'); from src.green_agent.agent import start_green_agent; port = int(os.environ.get('PORT', 8080)); print(f'Starting green agent on port {port}'); start_green_agent(host='0.0.0.0', port=port)"
+# Make run.sh executable
+RUN chmod +x run.sh
+
+# Start the AgentBeats controller
+# The controller will use AGENT_PORT (or PORT from Cloud Run) and launch run.sh
+CMD ["agentbeats", "run_ctrl"]
 

@@ -8,11 +8,29 @@ echo "FOLIO Baseline Agent - Cloud Run Deployment"
 echo "=========================================="
 echo ""
 
-# Check if gcloud is installed
+# Source gcloud SDK if not in PATH
 if ! command -v gcloud &> /dev/null; then
-    echo "Error: gcloud command not found"
-    echo "Please install Google Cloud SDK: https://cloud.google.com/sdk/docs/install"
-    exit 1
+    # Try common gcloud locations
+    GCLOUD_PATHS=(
+        "$HOME/google-cloud-sdk/path.bash.inc"
+        "/usr/local/google-cloud-sdk/path.bash.inc"
+        "../../google-cloud-sdk/path.bash.inc"
+    )
+    
+    for gcloud_path in "${GCLOUD_PATHS[@]}"; do
+        if [ -f "$gcloud_path" ]; then
+            echo "Found gcloud SDK at: $gcloud_path"
+            source "$gcloud_path"
+            break
+        fi
+    done
+    
+    # Check again after sourcing
+    if ! command -v gcloud &> /dev/null; then
+        echo "Error: gcloud command not found"
+        echo "Please install Google Cloud SDK: https://cloud.google.com/sdk/docs/install"
+        exit 1
+    fi
 fi
 
 echo "✓ Google Cloud SDK found"

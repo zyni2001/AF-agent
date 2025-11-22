@@ -2,14 +2,14 @@
 
 An AgentBeats-compatible benchmark for evaluating AI agents on first-order logic inference tasks using the FOLIO dataset.
 
-## Overview
+## 🎯 Overview
 
 This benchmark evaluates how well AI agents can determine whether logical conclusions follow from given premises. It implements and compares two approaches:
 
 1. **Baseline Agent**: Direct LLM reasoning without formal logic
-2. **Autoformalization Agent**: Converts natural language to First-Order Logic (FOL), then uses Vampire theorem prover for verification
+2. **Autoformalization Agent**: LLM generates executable Z3 Python code to solve logical reasoning problems
 
-## Architecture
+## 🏗️ Architecture
 
 ### Green Agent (Benchmark Evaluator)
 
@@ -21,20 +21,34 @@ This benchmark evaluates how well AI agents can determine whether logical conclu
 ### White Agents (Being Evaluated)
 
 #### Baseline Agent
-
-- Uses Gemini 2.5 Flash for direct reasoning
+- Uses Gemini 2.0 Flash for direct reasoning
 - Receives natural language premises and conclusion
 - Returns: True, False, or Uncertain
 
 #### Autoformalization Agent
+- **Stage 1**: LLM generates executable Z3 Python code from natural language problem
+- **Stage 2**: Execute the generated code and parse the result
+- Returns: True (conclusion follows), False (contradiction), or Uncertain (cannot determine)
 
-- **Stage 1**: LLM converts natural language → FOL format
-- **Stage 2**: Vampire theorem prover verifies logical validity
-- Returns: True (refutation found), False (definite), or Uncertain (timeout)
+## 🚀 Quick Start
 
-## Quick Start
+### Local Testing
 
-### Deploy to AgentBeats Platform
+```bash
+# 1. Install dependencies
+uv sync  # or: pip install -e .
+
+# 2. Set API key
+export GEMINI_API_KEY='your_api_key_here'
+
+# 3. Run quick test
+./quick_local_test.sh
+
+# 4. Or run with more examples
+python main.py launch --max 10 --both
+```
+
+### Deploy to AgentBeats
 
 ```bash
 # 1. Deploy Baseline Agent
@@ -44,21 +58,12 @@ This benchmark evaluates how well AI agents can determine whether logical conclu
 ./deploy_green.sh
 
 # 3. Register at https://v2.agentbeats.org
+#    - Add your agents with the Cloud Run URLs
+#    - Create an assessment
+#    - Run evaluation
 ```
 
-See [AGENTBEATS_DEPLOYMENT.md](AGENTBEATS_DEPLOYMENT.md) for detailed deployment instructions.
-
-### Local Installation
-
-```bash
-# Install dependencies with uv (recommended)
-uv sync
-
-# Or with pip
-pip install -e .
-```
-
-## Configuration
+## 📋 Configuration
 
 Create a `.env` file:
 
@@ -66,65 +71,42 @@ Create a `.env` file:
 # Gemini API Key (required)
 GEMINI_API_KEY=your_api_key_here
 
-# Vampire theorem prover path (for autoform agent)
-VAMPIRE_PATH=/path/to/vampire/build/vampire
+# AgentBeats configuration (for deployment)
+HOST=localhost
+AGENT_PORT=9001
 ```
 
-## Usage
+Get your API key from: https://aistudio.google.com/app/apikey
 
-### Local Testing
-
-```bash
-# Quick test (3 examples)
-python main.py quick
-
-# Evaluate both agents on 10 examples
-python main.py launch --max 10 --both
-
-# Full evaluation (all 204 validation cases)
-python main.py launch --both
-```
-
-### Deployed Agent Testing
-
-```bash
-# Test deployed agents
-python test_deployed_agents.py
-```
-
-## Repository Structure
+## 📦 Repository Structure
 
 ```
 folio-benchmark/
 ├── src/
-│   ├── green_agent/          # Benchmark evaluator (Green Agent)
-│   │   ├── agent.py           # Main evaluation logic
-│   │   └── folio_green_agent.toml  # Agent card configuration
-│   ├── white_agent_baseline/  # Direct LLM reasoning agent
+│   ├── green_agent/           # Benchmark evaluator (Green Agent)
+│   │   ├── agent.py            # Main evaluation logic
+│   │   └── folio_green_agent.toml
+│   ├── white_agent_baseline/   # Direct LLM reasoning agent
 │   │   └── agent.py
-│   ├── white_agent_autoform/  # Autoformalization agent
+│   ├── white_agent_autoform/   # Z3 code generation agent
 │   │   └── agent.py
-│   ├── folio_utils/          # Dataset loading and utilities
-│   │   ├── dataset.py
-│   │   └── format.py
-│   ├── vampire_runner/       # Vampire theorem prover wrapper
-│   │   └── runner.py
-│   └── my_util/             # A2A protocol helpers
+│   ├── folio_utils/           # Dataset and utilities
+│   │   └── dataset.py
+│   └── my_util/               # A2A protocol helpers
 │       └── my_a2a.py
-├── data/                    # FOLIO dataset
-│   └── folio-wiki/
-│       └── dev.csv
-├── Dockerfile.baseline      # Baseline agent container
-├── Dockerfile.green         # Green agent container
-├── deploy_baseline.sh       # Deploy baseline to Cloud Run
-├── deploy_green.sh          # Deploy green agent to Cloud Run
-├── main.py                  # CLI entry point
-├── test_deployed_agents.py  # Test deployed agents
-├── test_simple.py           # Simple local test
-└── README.md               # This file
+├── data/                      # FOLIO dataset
+│   └── folio-wiki/dev.csv
+├── Dockerfile.baseline        # Baseline agent container
+├── Dockerfile.green           # Green agent container
+├── deploy_baseline.sh         # Deploy baseline to Cloud Run
+├── deploy_green.sh            # Deploy green agent to Cloud Run
+├── run.sh                     # AgentBeats controller launcher
+├── main.py                    # CLI entry point
+├── quick_local_test.sh        # Quick local test script
+└── README.md                  # This file
 ```
 
-## Dataset
+## 📊 Dataset
 
 This benchmark uses the FOLIO dataset:
 
@@ -134,31 +116,43 @@ This benchmark uses the FOLIO dataset:
 - **Format**: Natural language premises + conclusion → True/False/Uncertain
 
 Each example contains:
-
 - `premises`: Natural language statements
-- `premises-FOL`: Formalized first-order logic (for autoformalization)
 - `conclusion`: Statement to verify
-- `conclusion-FOL`: Formalized conclusion
 - `label`: Ground truth (True/False/Uncertain)
 
-## Evaluation Metrics
+## 📈 Evaluation Metrics
 
 The benchmark reports:
-
 - **Accuracy**: Percentage of correct predictions
-- **Correct/Incorrect/Parse Errors**: Detailed breakdown
+- **Correct/Incorrect counts**: Detailed breakdown
 - **Average Time per Case**: Performance measurement
 - **Per-Example Results**: Individual predictions vs. ground truth
 
-## AgentBeats Integration
+## 🔧 Usage
 
-This benchmark follows the AgentBeats green agent specification:
+### CLI Commands
 
-1. **Agent Card**: Defines capabilities and protocols (`folio_green_agent.toml`)
-2. **A2A Protocol**: Communicates with white agents using Agent-to-Agent protocol
+```bash
+# Start individual agents
+python main.py green      # Start green agent
+python main.py baseline   # Start baseline agent
+python main.py autoform   # Start autoformalization agent
+
+# Run evaluations
+python main.py quick                    # Quick test (5 examples)
+python main.py launch --max 10 --both   # Evaluate 10 examples, both agents
+python main.py full                     # Full evaluation (all 204 examples)
+```
+
+### AgentBeats Integration
+
+The benchmark follows the AgentBeats green agent specification:
+
+1. **Agent Card**: Defines capabilities and protocols
+2. **A2A Protocol**: Communicates with white agents
 3. **Evaluation Task**: Receives white agent URL, runs evaluation, returns metrics
-4. **Input Format**:
 
+Input format for green agent:
 ```xml
 <white_agent_url>
 https://your-agent-url.run.app
@@ -166,22 +160,9 @@ https://your-agent-url.run.app
 <max_examples>10</max_examples>
 ```
 
-## Development
+## 🐳 Docker Deployment
 
-### Running Tests
-
-```bash
-# Test dataset loading
-python test_simple.py
-
-# Test deployed agents
-python test_deployed_agents.py
-
-# Test specific components
-python -c "from src.folio_utils.dataset import load_validation_dataset; print(load_validation_dataset(max_examples=5))"
-```
-
-### Building Docker Images
+### Build Locally
 
 ```bash
 # Build baseline agent
@@ -190,38 +171,77 @@ docker build -t folio-baseline-agent -f Dockerfile.baseline .
 # Build green agent
 docker build -t folio-green-agent -f Dockerfile.green .
 
-# Run locally
-docker run -p 8080:8080 -e GEMINI_API_KEY=your_key folio-baseline-agent
+# Run locally with AgentBeats controller
+docker run -p 8080:8080 \
+  -e GEMINI_API_KEY=your_key \
+  -e AGENT_ROLE=baseline \
+  folio-baseline-agent
 ```
 
-## Requirements
+### Deploy to Cloud Run
 
-- Python 3.11+
-- Gemini API key (for LLM inference)
-- Vampire theorem prover (optional, for autoformalization agent)
-- Google Cloud account (for deployment)
+The deployment scripts handle:
+- Building Docker images with Cloud Build
+- Deploying to Google Cloud Run
+- Setting environment variables (API key, public URL)
+- Configuring AgentBeats controller
+
+Requirements:
+- Google Cloud SDK installed
+- Project configured: `gcloud config set project YOUR_PROJECT_ID`
+- APIs enabled: Cloud Run, Cloud Build
+
+## 📝 Requirements
+
+- **Python**: 3.13+
+- **Gemini API key**: For LLM inference
+- **Google Cloud account**: For deployment (optional, for AgentBeats platform)
 
 ### Dependencies
 
-See `pyproject.toml` for full dependency list. Key packages:
+Key packages (see `pyproject.toml`):
+- `a2a-sdk[http-server]>=0.3.8` - Agent-to-Agent protocol
+- `earthshaker>=0.1.0` - AgentBeats controller runtime
+- `litellm>=1.0.0` - LLM API wrapper
+- `z3-solver>=4.12.0` - SMT solver for logical reasoning
+- `pandas>=2.0.0` - Data processing
+- `uvicorn>=0.27.0` - ASGI web server
 
-- `a2a-sdk[http-server]`: Agent-to-Agent protocol
-- `litellm`: LLM API wrapper
-- `pandas`: Data processing
-- `uvicorn`: ASGI web server
-- `pydantic`: Data validation
+## 🧪 Testing
 
-## License
+### Local Test Results
 
-This project uses the FOLIO dataset, which is available under its original license.
+```bash
+$ ./quick_local_test.sh
 
-## Acknowledgments
+Testing Z3 Autoformalization Locally
+========================================
+Testing autoformalization agent with 2 examples...
+
+✓ Case 1: Predicted: Uncertain, Expected: Uncertain ✓
+✓ Case 2: Predicted: True, Expected: True ✓
+
+Accuracy: 100.00%
+Average time: 4.26s per case
+```
+
+## 🌐 Deployed Agents
+
+Example Cloud Run URLs (your URLs will be different):
+```
+Baseline Agent: https://folio-baseline-agent-qvayglp4ia-uc.a.run.app
+Green Agent:    https://folio-green-agent-qvayglp4ia-uc.a.run.app
+```
+
+Register these URLs on https://v2.agentbeats.org to run assessments.
+
+## 🙏 Acknowledgments
 
 - **FOLIO Dataset**: Yale LILY Lab
-- **Vampire Prover**: Vampire development team
+- **Z3 Solver**: Microsoft Research
 - **AgentBeats Platform**: UC Berkeley CS294-282 course
 
-## Citation
+## 📄 Citation
 
 If you use this benchmark, please cite the FOLIO dataset:
 
@@ -234,6 +254,6 @@ If you use this benchmark, please cite the FOLIO dataset:
 }
 ```
 
-## Contact
+## 📧 Contact
 
-For questions or issues, please contact the course staff or open an issue on GitHub.
+For questions or issues, please open an issue on GitHub.

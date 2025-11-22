@@ -52,4 +52,24 @@ htmlcov/
 # Logs
 *.log
 
+# Temporary files
+*.tmp
+*.bak
+*.backup
+*.swp
+*~
+
+# Test results
+test_*.py
+test_*.sh
+*_test.py
+evaluation_results.json
+
+# Deployment temporary files
+deployment.log
+image/
+
+# Documentation drafts
 COMMIT_GUIDE.md
+DEPLOYMENT_COMPLETE.md
+QUICK_LOCAL_TEST.md

@@ -25,7 +25,7 @@ def baseline():
 
 @app.command()
 def autoform():
-    """Start the autoformalization white agent (LLM→FOL→Vampire)."""
+    """Start the autoformalization white agent (LLM→Z3 Code→Execute)."""
     start_autoform_white_agent()
 
 
