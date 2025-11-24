@@ -98,13 +98,12 @@ Just output the single word answer.
         for attempt in range(len(GEMINI_API_KEYS)):
             try:
                 api_key = get_next_api_key()
-                os.environ['GEMINI_API_KEY'] = api_key
                 
                 response = completion(
                     messages=messages,
-                    model="gemini/gemini-2.5-flash",
+                    model="gemini/gemini-2.0-flash-exp",
                     temperature=0.0,
-                    max_tokens=500,
+                    api_key=api_key,
                 )
                 break
             except Exception as e:
@@ -121,13 +120,12 @@ Just output the single word answer.
             return
         
         # Extract response
-        next_message = response.choices[0].message.model_dump()
-        assistant_content = next_message.get("content", "")
+        assistant_content = response.choices[0].message.content
         
         # Handle empty or None content
-        if not assistant_content or assistant_content is None:
+        if not assistant_content:
             assistant_content = "Uncertain"
-            print("Baseline agent: Warning - LLM returned empty content, defaulting to 'Uncertain'")
+            print(f"Baseline agent: Warning - LLM returned empty content, defaulting to 'Uncertain'")
         
         messages.append({
             "role": "assistant",
