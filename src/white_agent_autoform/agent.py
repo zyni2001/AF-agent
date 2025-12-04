@@ -64,7 +64,7 @@ class AutoformWhiteAgentExecutor(AgentExecutor):
         self.ctx_id_to_messages = {}
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Execute autoformalization reasoning using Z3 code generation."""
+        """Execute autoformalization reasoning using Z3 code generation with self-refinement."""
         
         try:
             # Get user input
@@ -74,7 +74,13 @@ class AutoformWhiteAgentExecutor(AgentExecutor):
             print(f"Autoform agent: Processing request")
             print(f"{'='*60}\n")
             
-            # Create prompt for Z3 code generation
+            # Self-refinement parameters
+            max_repairs = 3
+            z3_code = None
+            execution_error = None
+            original_user_input = user_input  # Keep original for repair prompts
+            
+            # Create initial system prompt for Z3 code generation
             system_prompt = """You are an expert in formal logic and Z3 SMT solver.
 
 Given a logical reasoning problem with premises and a conclusion, generate executable Python code using the Z3 library that:
@@ -136,112 +142,187 @@ else:
 
 Now generate the code for the following problem:"""
 
-            user_prompt = f"{user_input}\n\nGenerate the complete executable Z3 Python code:"
-            
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
-            
-            # Call LLM to generate Z3 code
-            print("Generating Z3 Python code...")
-            response = None
-            last_error = None
-            
-            for attempt in range(len(GEMINI_API_KEYS)):
-                try:
-                    api_key = get_next_api_key()
-                    os.environ['GEMINI_API_KEY'] = api_key
+            # Self-refinement loop
+            for repair_attempt in range(max_repairs + 1):  # 0 to max_repairs (inclusive)
+                is_repair = repair_attempt > 0
+                
+                if is_repair:
+                    if execution_error is None:
+                        execution_error = "Previous code execution failed"
                     
-                    response = completion(
-                        messages=messages,
-                        model="gemini/gemini-2.0-flash-exp",
-                        api_key=api_key,
-                        temperature=0.0
-                    )
-                    break
-                except Exception as e:
-                    last_error = e
-                    print(f"Autoform agent: API call failed (attempt {attempt + 1}/{len(GEMINI_API_KEYS)}): {e}")
-                    continue
-            
-            if response is None:
-                error_msg = f"ERROR: All API keys failed. Last error: {last_error}"
-                print(f"Autoform agent: {error_msg}")
-                await event_queue.enqueue_event(
-                    new_agent_text_message("Uncertain", context_id=context.context_id)
-                )
-                return
-            
-            z3_code = response.choices[0].message.content
-            if z3_code is None:
-                print("Autoform agent: ERROR: LLM returned None content")
-                await event_queue.enqueue_event(
-                    new_agent_text_message("Uncertain", context_id=context.context_id)
-                )
-                return
-            
-            # Extract code from markdown if present
-            if "```python" in z3_code:
-                z3_code = z3_code.split("```python")[1].split("```")[0].strip()
-            elif "```" in z3_code:
-                z3_code = z3_code.split("```")[1].split("```")[0].strip()
-            
-            print(f"\nGenerated Z3 code ({len(z3_code)} chars)")
-            print(f"First 200 chars: {z3_code[:200]}...\n")
-            
-            # Execute the Z3 code
-            print("Executing Z3 code...")
-            
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-                f.write(z3_code)
-                temp_file = f.name
-            
-            try:
-                result = subprocess.run(
-                    ['python', temp_file],
-                    capture_output=True,
-                    text=True,
-                    timeout=60  # 60 second timeout
-                )
+                    print(f"\n{'='*60}")
+                    print(f"Repair attempt {repair_attempt}/{max_repairs}")
+                    print(f"{'='*60}\n")
+                    
+                    # Create repair prompt
+                    repair_system_prompt = """You are an expert in fixing Python Z3 code syntax errors.
+
+The previous Z3 code you generated had syntax errors. Please fix the code based on the error message.
+
+IMPORTANT: Common Z3 syntax issues:
+- Use ForAll (capital A) for universal quantification, NOT Forall
+- Use Exists (capital E) for existential quantification, NOT Exists
+- Ensure all variables are properly declared before use
+- Check that all function names are correct (e.g., Implies, And, Or, Not, etc.)
+
+Generate the FIXED executable Z3 Python code that:
+1. Fixes all syntax errors
+2. Encodes the premises and conclusion correctly
+3. Prints EXACTLY one of: "True", "False", or "Uncertain"
+- Do NOT include any explanation, only the fixed executable code"""
+
+                    repair_user_prompt = f"""Original problem:
+{original_user_input}
+
+Previous code that failed:
+```python
+{z3_code}
+```
+
+Error message:
+{execution_error}
+
+Please generate the FIXED Z3 Python code:"""
+                    
+                    messages = [
+                        {"role": "system", "content": repair_system_prompt},
+                        {"role": "user", "content": repair_user_prompt}
+                    ]
+                else:
+                    # Initial generation
+                    user_prompt = f"{user_input}\n\nGenerate the complete executable Z3 Python code:"
+                    messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
                 
-                output = result.stdout.strip()
-                stderr = result.stderr.strip()
+                # Call LLM to generate/fix Z3 code
+                if is_repair:
+                    print("Generating fixed Z3 Python code...")
+                else:
+                    print("Generating Z3 Python code...")
                 
-                print(f"Execution return code: {result.returncode}")
-                print(f"Stdout: {output[:200] if output else '(empty)'}")
-                if stderr:
-                    print(f"Stderr: {stderr[:200]}")
+                response = None
+                last_error = None
                 
-                # Parse the result from the last line
-                lines = output.split('\n') if output else []
-                answer = "Uncertain"
-                
-                for line in reversed(lines):
-                    line = line.strip()
-                    if line in ["True", "False", "Uncertain"]:
-                        answer = line
+                for api_attempt in range(len(GEMINI_API_KEYS)):
+                    try:
+                        api_key = get_next_api_key()
+                        os.environ['GEMINI_API_KEY'] = api_key
+                        
+                        response = completion(
+                            messages=messages,
+                            model="gemini/gemini-2.0-flash-exp",
+                            api_key=api_key,
+                            temperature=0.0
+                        )
                         break
+                    except Exception as e:
+                        last_error = e
+                        print(f"Autoform agent: API call failed (attempt {api_attempt + 1}/{len(GEMINI_API_KEYS)}): {e}")
+                        continue
                 
-                if result.returncode != 0:
-                    print(f"Warning: Z3 code execution failed with return code {result.returncode}")
+                if response is None:
+                    error_msg = f"ERROR: All API keys failed. Last error: {last_error}"
+                    print(f"Autoform agent: {error_msg}")
+                    await event_queue.enqueue_event(
+                        new_agent_text_message("Uncertain", context_id=context.context_id)
+                    )
+                    return
+                
+                z3_code = response.choices[0].message.content
+                if z3_code is None:
+                    print("Autoform agent: ERROR: LLM returned None content")
+                    await event_queue.enqueue_event(
+                        new_agent_text_message("Uncertain", context_id=context.context_id)
+                    )
+                    return
+                
+                # Extract code from markdown if present
+                if "```python" in z3_code:
+                    z3_code = z3_code.split("```python")[1].split("```")[0].strip()
+                elif "```" in z3_code:
+                    z3_code = z3_code.split("```")[1].split("```")[0].strip()
+                
+                if is_repair:
+                    print(f"\nFixed Z3 code ({len(z3_code)} chars)")
+                else:
+                    print(f"\nGenerated Z3 code ({len(z3_code)} chars)")
+                print(f"First 200 chars: {z3_code[:200]}...\n")
+                
+                # Execute the Z3 code
+                print("Executing Z3 code...")
+                
+                temp_file = None
+                try:
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                        f.write(z3_code)
+                        temp_file = f.name
+                    
+                    result = subprocess.run(
+                        ['python', temp_file],
+                        capture_output=True,
+                        text=True,
+                        timeout=60  # 60 second timeout
+                    )
+                    
+                    output = result.stdout.strip()
+                    stderr = result.stderr.strip()
+                    
+                    print(f"Execution return code: {result.returncode}")
+                    if output:
+                        print(f"Stdout: {output[:200]}")
                     if stderr:
-                        print(f"Error: {stderr[:500]}")
-                    answer = "Uncertain"
-                
-                print(f"\n{'='*60}")
-                print(f"Final answer: {answer}")
-                print(f"{'='*60}\n")
-                
-                # Send response
-                await event_queue.enqueue_event(
-                    new_agent_text_message(answer, context_id=context.context_id)
-                )
-                
-            finally:
-                # Clean up temp file
-                if os.path.exists(temp_file):
-                    os.unlink(temp_file)
+                        print(f"Stderr: {stderr[:500]}")
+                    
+                    # If execution succeeded, parse result and exit loop
+                    if result.returncode == 0:
+                        # Parse the result from the last line
+                        lines = output.split('\n') if output else []
+                        answer = "Uncertain"
+                        
+                        for line in reversed(lines):
+                            line = line.strip()
+                            if line in ["True", "False", "Uncertain"]:
+                                answer = line
+                                break
+                        
+                        print(f"\n{'='*60}")
+                        print(f"Final answer: {answer}")
+                        print(f"{'='*60}\n")
+                        
+                        # Send response
+                        await event_queue.enqueue_event(
+                            new_agent_text_message(answer, context_id=context.context_id)
+                        )
+                        return  # Success, exit the refinement loop
+                    
+                    # Execution failed - prepare for repair
+                    execution_error = stderr if stderr else f"Execution failed with return code {result.returncode}"
+                    print(f"Warning: Z3 code execution failed with return code {result.returncode}")
+                    print(f"Error: {execution_error[:500]}")
+                    
+                    # If we've exhausted repair attempts, return Uncertain
+                    if repair_attempt >= max_repairs:
+                        print(f"\nMax repair attempts ({max_repairs}) reached. Returning Uncertain.")
+                        await event_queue.enqueue_event(
+                            new_agent_text_message("Uncertain", context_id=context.context_id)
+                        )
+                        return
+                    
+                    # Continue to next repair attempt
+                    print(f"\nAttempting repair {repair_attempt + 1}/{max_repairs}...")
+                    
+                finally:
+                    # Clean up temp file
+                    if temp_file and os.path.exists(temp_file):
+                        os.unlink(temp_file)
+            
+            # If we somehow exit the loop without returning, return Uncertain
+            print("ERROR: Exited refinement loop without result")
+            await event_queue.enqueue_event(
+                new_agent_text_message("Uncertain", context_id=context.context_id)
+            )
             
         except Exception as e:
             # Catch-all for any unexpected errors
