@@ -17,30 +17,50 @@ from a2a.types import (
 
 
 async def get_agent_card(url: str) -> AgentCard | None:
-    httpx_client = httpx.AsyncClient()
+    """
+    Get agent card from URL.
+    
+    In Cloud Run/AgentBeats environment, the URL should be the controller's proxy path:
+    https://controller-url/to_agent/{agent_id}/.well-known/agent-card.json
+    
+    The A2ACardResolver will handle the path resolution automatically.
+    """
+    httpx_client = httpx.AsyncClient(timeout=30.0)  # Increase timeout for Cloud Run
     resolver = A2ACardResolver(httpx_client=httpx_client, base_url=url)
 
-    card: AgentCard | None = await resolver.get_agent_card()
+    try:
+        card: AgentCard | None = await resolver.get_agent_card()
+        return card
+    except Exception as e:
+        print(f"Error getting agent card from {url}: {e}")
+        return None
 
-    return card
 
-
-async def wait_agent_ready(url, timeout=10):
-    # wait until the A2A server is ready, check by getting the agent card
+async def wait_agent_ready(url, timeout=30):
+    """
+    Wait until the A2A server is ready, check by getting the agent card.
+    
+    Increased default timeout to 30 seconds to account for:
+    - Agent process startup time after reset
+    - Cloud Run cold starts
+    - Network latency
+    """
     retry_cnt = 0
     while retry_cnt < timeout:
         retry_cnt += 1
         try:
             card = await get_agent_card(url)
             if card is not None:
+                print(f"Agent is ready after {retry_cnt} attempts")
                 return True
             else:
                 print(
                     f"Agent card not available yet..., retrying {retry_cnt}/{timeout}"
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error checking agent readiness (attempt {retry_cnt}/{timeout}): {e}")
         await asyncio.sleep(1)
+    print(f"Agent not ready after {timeout} seconds")
     return False
 
 

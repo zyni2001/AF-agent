@@ -21,15 +21,26 @@ def get_api_keys_from_env():
     # Support comma-separated keys for rotation
     return [key.strip() for key in api_key.split(',') if key.strip()]
 
-GEMINI_API_KEYS = get_api_keys_from_env()
-current_key_index = 0
+# Lazy initialization - don't load API keys at module import time
+# This prevents import errors when the module is imported before environment is set up
+_gemini_api_keys = None
+_current_key_index = 0
+
+
+def _ensure_api_keys_loaded():
+    """Ensure API keys are loaded (lazy initialization)."""
+    global _gemini_api_keys
+    if _gemini_api_keys is None:
+        _gemini_api_keys = get_api_keys_from_env()
+    return _gemini_api_keys
 
 
 def get_next_api_key():
     """Get next API key in rotation."""
-    global current_key_index
-    key = GEMINI_API_KEYS[current_key_index]
-    current_key_index = (current_key_index + 1) % len(GEMINI_API_KEYS)
+    global _current_key_index
+    keys = _ensure_api_keys_loaded()
+    key = keys[_current_key_index]
+    _current_key_index = (_current_key_index + 1) % len(keys)
     return key
 
 
@@ -94,8 +105,9 @@ Just output the single word answer.
         # Call LLM with retry logic for API key rotation
         response = None
         last_error = None
+        api_keys = _ensure_api_keys_loaded()
         
-        for attempt in range(len(GEMINI_API_KEYS)):
+        for attempt in range(len(api_keys)):
             try:
                 api_key = get_next_api_key()
                 
@@ -108,7 +120,7 @@ Just output the single word answer.
                 break
             except Exception as e:
                 last_error = e
-                print(f"Baseline agent: API call failed (attempt {attempt + 1}/{len(GEMINI_API_KEYS)}): {e}")
+                print(f"Baseline agent: API call failed (attempt {attempt + 1}/{len(api_keys)}): {e}")
                 continue
         
         if response is None:
@@ -144,7 +156,10 @@ Just output the single word answer.
 
 
 def start_baseline_white_agent(host="localhost", port=9002):
+    print("=" * 60)
     print("Starting baseline white agent (direct LLM)...")
+    print(f"Host: {host}, Port: {port}")
+    print("=" * 60)
     
     # Use public URL from environment if available (for Cloud Run)
     public_url = os.environ.get("PUBLIC_URL")
@@ -155,7 +170,9 @@ def start_baseline_white_agent(host="localhost", port=9002):
         url = f"http://{host}:{port}"
         print(f"Using local URL: {url}")
     
+    print("Preparing agent card...")
     card = prepare_white_agent_card(url)
+    print("Agent card prepared successfully")
 
     request_handler = DefaultRequestHandler(
         agent_executor=BaselineWhiteAgentExecutor(),
@@ -180,5 +197,10 @@ def start_baseline_white_agent(host="localhost", port=9002):
     # Add the route to the existing app
     starlette_app.routes.append(Route("/status", health_check))
 
-    uvicorn.run(starlette_app, host=host, port=port)
+    print("Starting Uvicorn server...")
+    print(f"Agent will be available at: {url}")
+    print("Agent card endpoint: {}/.well-known/agent-card.json".format(url))
+    print("=" * 60)
+    
+    uvicorn.run(starlette_app, host=host, port=port, log_level="info")
 

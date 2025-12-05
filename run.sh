@@ -23,6 +23,11 @@ case "${ROLE}" in
     ;;
   baseline)
     echo "Launching Baseline White Agent..."
+    echo "Environment check:"
+    echo "  AGENT_ROLE=${ROLE}"
+    echo "  HOST=${HOST}"
+    echo "  PORT=${PORT}"
+    echo "  GEMINI_API_KEY=${GEMINI_API_KEY:+set}"
     exec python -c "import os,sys; sys.path.insert(0,'.'); from src.white_agent_baseline.agent import start_baseline_white_agent; start_baseline_white_agent(host='${HOST}', port=${PORT})"
     ;;
   autoform)
