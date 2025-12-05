@@ -92,7 +92,14 @@ echo ""
 echo "Step 4: Deploy to Cloud Run"
 echo ""
 
-# Initial deployment without PUBLIC_URL
+# Get API key from environment or prompt
+if [ -z "$GEMINI_API_KEY" ]; then
+    echo "GEMINI_API_KEY not found in environment. Please enter it:"
+    read -s GEMINI_API_KEY
+    echo ""
+fi
+
+# Initial deployment with AGENT_ROLE set
 gcloud run deploy folio-green-agent \
   --image gcr.io/$PROJECT_ID/folio-green-agent \
   --platform managed \
@@ -101,8 +108,9 @@ gcloud run deploy folio-green-agent \
   --port 8080 \
   --memory 2Gi \
   --timeout 300 \
-  --min-instances 0 \
+  --min-instances 1 \
   --max-instances 5 \
+  --set-env-vars "AGENT_ROLE=green,GEMINI_API_KEY=$GEMINI_API_KEY" \
   --quiet
 
 echo ""
@@ -112,11 +120,14 @@ SERVICE_URL=$(gcloud run services describe folio-green-agent --region=$REGION --
 echo "✓ Service deployed at: $SERVICE_URL"
 echo ""
 
-# Update with PUBLIC_URL
-echo "Updating environment variables with PUBLIC_URL..."
+# Extract domain from SERVICE_URL (remove https:// prefix for CLOUDRUN_HOST)
+CLOUDRUN_HOST="${SERVICE_URL#https://}"
+
+# Update with PUBLIC_URL, CLOUDRUN_HOST, AGENT_ROLE, and GEMINI_API_KEY
+echo "Updating environment variables with PUBLIC_URL, CLOUDRUN_HOST, AGENT_ROLE, and GEMINI_API_KEY..."
 gcloud run services update folio-green-agent \
   --region $REGION \
-  --update-env-vars "PUBLIC_URL=$SERVICE_URL" \
+  --update-env-vars "PUBLIC_URL=$SERVICE_URL,CLOUDRUN_HOST=$CLOUDRUN_HOST,AGENT_ROLE=green,GEMINI_API_KEY=$GEMINI_API_KEY" \
   --quiet
 
 echo ""

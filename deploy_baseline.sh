@@ -158,8 +158,8 @@ gcloud run deploy folio-baseline-agent \
   --port 8080 \
   --memory 1Gi \
   --cpu 1 \
-  --timeout 180 \
-  --min-instances 0 \
+  --timeout 300 \
+  --min-instances 1 \
   --max-instances 5 \
   --set-env-vars "GEMINI_API_KEY=$API_KEY" \
   --quiet
@@ -171,11 +171,14 @@ SERVICE_URL=$(gcloud run services describe folio-baseline-agent --region=$REGION
 echo "✓ Service deployed at: $SERVICE_URL"
 echo ""
 
-# Update with PUBLIC_URL
-echo "Updating environment variables with PUBLIC_URL..."
+# Extract domain from SERVICE_URL (remove https:// prefix for CLOUDRUN_HOST)
+CLOUDRUN_HOST="${SERVICE_URL#https://}"
+
+# Update with PUBLIC_URL, CLOUDRUN_HOST, and AGENT_ROLE
+echo "Updating environment variables with PUBLIC_URL, CLOUDRUN_HOST, and AGENT_ROLE..."
 gcloud run services update folio-baseline-agent \
   --region $REGION \
-  --update-env-vars "GEMINI_API_KEY=$API_KEY,PUBLIC_URL=$SERVICE_URL" \
+  --update-env-vars "GEMINI_API_KEY=$API_KEY,PUBLIC_URL=$SERVICE_URL,CLOUDRUN_HOST=$CLOUDRUN_HOST,AGENT_ROLE=baseline" \
   --quiet
 
 echo ""

@@ -120,17 +120,19 @@ echo ""
 echo "Step 6: Deploy to Cloud Run"
 echo ""
 
+# First, deploy without PUBLIC_URL (we need the service URL first)
 gcloud run deploy ${SERVICE_NAME} \
     --image ${IMAGE_NAME}:latest \
     --platform managed \
     --region ${REGION} \
     --allow-unauthenticated \
-    --set-env-vars "GEMINI_API_KEY=${GEMINI_API_KEY}" \
+    --set-env-vars "GEMINI_API_KEY=${GEMINI_API_KEY},AGENT_ROLE=autoform" \
     --memory 1Gi \
     --cpu 1 \
-    --timeout 180s \
-    --min-instances 0 \
-    --max-instances 5
+    --timeout 300s \
+    --min-instances 1 \
+    --max-instances 5 \
+    --quiet
 
 # Get service URL
 echo ""
@@ -142,13 +144,16 @@ SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
 
 echo "✓ Service deployed at: ${SERVICE_URL}"
 
-# Update PUBLIC_URL environment variable
+# Extract domain from SERVICE_URL (remove https:// prefix for CLOUDRUN_HOST)
+CLOUDRUN_HOST="${SERVICE_URL#https://}"
+
+# Update PUBLIC_URL and CLOUDRUN_HOST environment variables
 echo ""
-echo "Updating environment variables with PUBLIC_URL..."
+echo "Updating environment variables with PUBLIC_URL and CLOUDRUN_HOST..."
 gcloud run services update ${SERVICE_NAME} \
     --platform managed \
     --region ${REGION} \
-    --update-env-vars "PUBLIC_URL=${SERVICE_URL}" \
+    --update-env-vars "GEMINI_API_KEY=${GEMINI_API_KEY},PUBLIC_URL=${SERVICE_URL},CLOUDRUN_HOST=${CLOUDRUN_HOST},AGENT_ROLE=autoform" \
     --quiet
 
 echo ""
@@ -169,4 +174,3 @@ echo "  3. Deploy Type: Remote"
 echo "  4. Controller URL: ${SERVICE_URL}"
 echo "  5. Agent Type: Assessee (White Agent)"
 echo ""
-
