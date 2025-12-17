@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import subprocess
+import asyncio
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -13,6 +14,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentSkill, AgentCard, AgentCapabilities
 from a2a.utils import new_agent_text_message
 from litellm import completion
+from litellm.exceptions import RateLimitError
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -98,6 +100,12 @@ Requirements:
 - The last line of output must be EXACTLY "True", "False", or "Uncertain"
 - Do NOT include any explanation, only the executable code
 
+CRITICAL Z3 SYNTAX RULES (common mistakes to avoid):
+- Use ForAll (capital A), NOT Forall
+- Use Exists (capital E), NOT Exists  
+- There is NO Iff function in Z3. For biconditional, use: And(Implies(a, b), Implies(b, a))
+- Always declare quantifier variables with Const() before using them in ForAll/Exists
+
 Example structure:
 ```python
 from z3 import *
@@ -159,10 +167,11 @@ Now generate the code for the following problem:"""
 
 The previous Z3 code you generated had syntax errors. Please fix the code based on the error message.
 
-IMPORTANT: Common Z3 syntax issues:
+CRITICAL Z3 SYNTAX FIXES:
 - Use ForAll (capital A) for universal quantification, NOT Forall
 - Use Exists (capital E) for existential quantification, NOT Exists
-- Ensure all variables are properly declared before use
+- There is NO Iff function in Z3! For biconditional, use: And(Implies(a, b), Implies(b, a))
+- Ensure all quantifier variables are declared with Const() before use in ForAll/Exists
 - Check that all function names are correct (e.g., Implies, And, Or, Not, etc.)
 
 Generate the FIXED executable Z3 Python code that:
@@ -204,26 +213,38 @@ Please generate the FIXED Z3 Python code:"""
                 
                 response = None
                 last_error = None
+                max_rate_limit_retries = 5
+                base_delay = 7  # Base delay in seconds (to stay under 10 req/min)
                 
-                for api_attempt in range(len(GEMINI_API_KEYS)):
-                    try:
-                        api_key = get_next_api_key()
-                        os.environ['GEMINI_API_KEY'] = api_key
-                        
-                        response = completion(
-                            messages=messages,
-                            model="gemini/gemini-2.0-flash-exp",
-                            api_key=api_key,
-                            temperature=0.0
-                        )
+                for rate_retry in range(max_rate_limit_retries):
+                    for api_attempt in range(len(GEMINI_API_KEYS)):
+                        try:
+                            api_key = get_next_api_key()
+                            os.environ['GEMINI_API_KEY'] = api_key
+                            
+                            response = completion(
+                                messages=messages,
+                                model="gemini/gemini-2.5-flash",
+                                api_key=api_key,
+                                temperature=0.0
+                            )
+                            break
+                        except RateLimitError as e:
+                            last_error = e
+                            retry_delay = base_delay * (2 ** rate_retry)
+                            print(f"Autoform agent: Rate limited (retry {rate_retry + 1}/{max_rate_limit_retries}), waiting {retry_delay}s...")
+                            await asyncio.sleep(retry_delay)
+                            break  # Break inner loop to retry with backoff
+                        except Exception as e:
+                            last_error = e
+                            print(f"Autoform agent: API call failed (key {api_attempt + 1}/{len(GEMINI_API_KEYS)}): {type(e).__name__}: {str(e)[:100]}")
+                            continue
+                    
+                    if response is not None:
                         break
-                    except Exception as e:
-                        last_error = e
-                        print(f"Autoform agent: API call failed (attempt {api_attempt + 1}/{len(GEMINI_API_KEYS)}): {e}")
-                        continue
                 
                 if response is None:
-                    error_msg = f"ERROR: All API keys failed. Last error: {last_error}"
+                    error_msg = f"ERROR: All retries failed. Last error: {last_error}"
                     print(f"Autoform agent: {error_msg}")
                     await event_queue.enqueue_event(
                         new_agent_text_message("Uncertain", context_id=context.context_id)

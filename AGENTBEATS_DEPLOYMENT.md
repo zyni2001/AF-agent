@@ -24,7 +24,6 @@ Complete guide for deploying the FOLIO Benchmark to the AgentBeats platform.
 The baseline agent uses direct LLM reasoning without formal logic.
 
 ```bash
-cd folio-benchmark
 ./deploy_baseline.sh
 ```
 
@@ -46,7 +45,6 @@ https://folio-baseline-agent-xxxxx-uc.a.run.app
 The green agent orchestrates the evaluation process.
 
 ```bash
-cd folio-benchmark
 ./deploy_green.sh
 ```
 
@@ -235,20 +233,6 @@ The green agent will:
 3. Compare responses with ground truth
 4. Return accuracy and performance metrics
 
-## Expected Results
-
-### Baseline Agent Performance
-- **Accuracy**: 30-50%
-- **Average Time**: 2-5 seconds per case
-- **Strength**: Fast, simple architecture
-- **Weakness**: Limited by LLM's reasoning capacity
-
-### Autoformalization Agent Performance  
-- **Accuracy**: 70-90%
-- **Average Time**: 5-15 seconds per case
-- **Strength**: Formal logic verification
-- **Weakness**: Slower due to theorem proving step
-
 ## Cloud Run Configuration
 
 ### Baseline Agent
@@ -270,11 +254,6 @@ The green agent will:
 ```
 
 ## Cost Optimization
-
-**Free Tier**: Cloud Run provides generous free tier:
-- 2 million requests/month
-- 360,000 GB-seconds/month
-- 180,000 vCPU-seconds/month
 
 **Tips**:
 - Set `--min-instances 0` to scale to zero when idle

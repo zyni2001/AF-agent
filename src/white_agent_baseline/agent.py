@@ -2,6 +2,8 @@
 
 import uvicorn
 import os
+import time
+import asyncio
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -10,6 +12,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentSkill, AgentCard, AgentCapabilities
 from a2a.utils import new_agent_text_message
 from litellm import completion
+from litellm.exceptions import RateLimitError
 
 
 # Get Gemini API keys from environment (comma-separated for rotation)
@@ -106,25 +109,38 @@ Just output the single word answer.
         response = None
         last_error = None
         api_keys = _ensure_api_keys_loaded()
+        max_retries = 5  # Max retries for rate limits
+        base_delay = 7  # Base delay in seconds (to stay under 10 req/min)
         
-        for attempt in range(len(api_keys)):
-            try:
-                api_key = get_next_api_key()
-                
-                response = completion(
-                    messages=messages,
-                    model="gemini/gemini-2.0-flash-exp",
-                    temperature=0.0,
-                    api_key=api_key,
-                )
+        for retry in range(max_retries):
+            for key_attempt in range(len(api_keys)):
+                try:
+                    api_key = get_next_api_key()
+                    
+                    response = completion(
+                        messages=messages,
+                        model="gemini/gemini-2.5-flash",
+                        temperature=0.0,
+                        api_key=api_key,
+                    )
+                    break
+                except RateLimitError as e:
+                    last_error = e
+                    # Extract retry delay from error if available, otherwise use exponential backoff
+                    retry_delay = base_delay * (2 ** retry)  # Exponential backoff
+                    print(f"Baseline agent: Rate limited (retry {retry + 1}/{max_retries}), waiting {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    break  # Break inner loop to retry with backoff
+                except Exception as e:
+                    last_error = e
+                    print(f"Baseline agent: API call failed (key {key_attempt + 1}/{len(api_keys)}): {type(e).__name__}: {str(e)[:100]}")
+                    continue
+            
+            if response is not None:
                 break
-            except Exception as e:
-                last_error = e
-                print(f"Baseline agent: API call failed (attempt {attempt + 1}/{len(api_keys)}): {e}")
-                continue
         
         if response is None:
-            error_msg = f"ERROR: All API keys failed. Last error: {last_error}"
+            error_msg = f"ERROR: All retries failed. Last error: {last_error}"
             print(f"Baseline agent: {error_msg}")
             await event_queue.enqueue_event(
                 new_agent_text_message(error_msg, context_id=context.context_id)
