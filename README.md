@@ -13,7 +13,7 @@ This benchmark evaluates how well AI agents can determine whether logical conclu
 
 ### Green Agent (Benchmark Evaluator)
 
-- Loads FOLIO validation dataset (204 logical reasoning problems)
+- Loads FOLIO validation dataset (203 logical reasoning problems)
 - Sends problems to white agents via A2A protocol
 - Compares agent responses with ground truth labels
 - Reports accuracy and performance metrics
@@ -112,7 +112,7 @@ This benchmark uses the FOLIO dataset:
 
 - **Source**: https://github.com/Yale-LILY/FOLIO
 - **Task**: First-order logic inference
-- **Size**: 204 validation examples
+- **Size**: 203 validation examples
 - **Format**: Natural language premises + conclusion → True/False/Uncertain
 
 Each example contains:
@@ -141,7 +141,7 @@ python main.py autoform   # Start autoformalization agent
 # Run evaluations
 python main.py quick                    # Quick test (5 examples)
 python main.py launch --max 10 --both   # Evaluate 10 examples, both agents
-python main.py full                     # Full evaluation (all 204 examples)
+python main.py full                     # Full evaluation (all 203 examples)
 ```
 
 ### AgentBeats Integration
