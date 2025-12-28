@@ -33,6 +33,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/folio_utils", "src/green_agent", "src/my_util", "src/white_agent_autoform", "src/white_agent_baseline"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v"
+
 [tool.uv]
 dev-dependencies = []
 
