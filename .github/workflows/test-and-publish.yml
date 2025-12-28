@@ -50,8 +50,28 @@ jobs:
             -e AGENT_ROLE=green \
             -e HOST=0.0.0.0 \
             $(echo "${{ steps.meta.outputs.tags }}" | head -n1)
-          echo "Waiting for agent to be ready..."
-          timeout 60 bash -c 'until curl -sf http://localhost:9001/status > /dev/null 2>&1; do sleep 2; done' || true
+          
+          echo "Waiting for controller to start..."
+          sleep 10
+          
+          echo "Waiting for agent to be ready (up to 120s)..."
+          for i in {1..60}; do
+            if curl -sf http://localhost:9001/status > /dev/null 2>&1; then
+              echo "Controller is ready!"
+              # Now wait for agent to register
+              if curl -sf http://localhost:9001/agents 2>&1 | grep -q "url"; then
+                echo "Agent is registered!"
+                break
+              fi
+            fi
+            echo "Attempt $i: Still waiting..."
+            sleep 2
+          done
+          
+          echo "=== Current container status ==="
+          docker ps
+          echo "=== Container logs so far ==="
+          docker logs green-agent-container 2>&1 | tail -50
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -113,8 +133,27 @@ jobs:
             -e AGENT_ROLE=baseline \
             -e HOST=0.0.0.0 \
             $(echo "${{ steps.meta.outputs.tags }}" | head -n1)
-          echo "Waiting for agent to be ready..."
-          timeout 60 bash -c 'until curl -sf http://localhost:9002/status > /dev/null 2>&1; do sleep 2; done' || true
+          
+          echo "Waiting for controller to start..."
+          sleep 10
+          
+          echo "Waiting for agent to be ready (up to 120s)..."
+          for i in {1..60}; do
+            if curl -sf http://localhost:9002/status > /dev/null 2>&1; then
+              echo "Controller is ready!"
+              if curl -sf http://localhost:9002/agents 2>&1 | grep -q "url"; then
+                echo "Agent is registered!"
+                break
+              fi
+            fi
+            echo "Attempt $i: Still waiting..."
+            sleep 2
+          done
+          
+          echo "=== Current container status ==="
+          docker ps
+          echo "=== Container logs so far ==="
+          docker logs baseline-agent-container 2>&1 | tail -50
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -176,8 +215,27 @@ jobs:
             -e AGENT_ROLE=autoform \
             -e HOST=0.0.0.0 \
             $(echo "${{ steps.meta.outputs.tags }}" | head -n1)
-          echo "Waiting for agent to be ready..."
-          timeout 60 bash -c 'until curl -sf http://localhost:9003/status > /dev/null 2>&1; do sleep 2; done' || true
+          
+          echo "Waiting for controller to start..."
+          sleep 10
+          
+          echo "Waiting for agent to be ready (up to 120s)..."
+          for i in {1..60}; do
+            if curl -sf http://localhost:9003/status > /dev/null 2>&1; then
+              echo "Controller is ready!"
+              if curl -sf http://localhost:9003/agents 2>&1 | grep -q "url"; then
+                echo "Agent is registered!"
+                break
+              fi
+            fi
+            echo "Attempt $i: Still waiting..."
+            sleep 2
+          done
+          
+          echo "=== Current container status ==="
+          docker ps
+          echo "=== Container logs so far ==="
+          docker logs autoform-agent-container 2>&1 | tail -50
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -248,4 +306,3 @@ jobs:
           echo "- folio-green-agent" >> $GITHUB_STEP_SUMMARY
           echo "- folio-baseline-agent" >> $GITHUB_STEP_SUMMARY
           echo "- folio-autoform-agent" >> $GITHUB_STEP_SUMMARY
-
