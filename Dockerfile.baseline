@@ -25,12 +25,11 @@ EXPOSE 8080
 # Set environment variables for AgentBeats
 ENV HOST=0.0.0.0
 ENV AGENT_ROLE=baseline
-ENV AGENT_PORT=9002
+ENV HTTPS_ENABLED=true
 
 # Make run.sh executable
 RUN chmod +x run.sh
 
-# Start the AgentBeats controller
-# The controller listens on $PORT (Cloud Run: 8080) and proxies to the agent on $AGENT_PORT
+# Run via AgentBeats controller (handles /to_agent/{cagent_id} routing)
 CMD ["agentbeats", "run_ctrl"]
 

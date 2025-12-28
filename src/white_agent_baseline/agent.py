@@ -114,16 +114,16 @@ Just output the single word answer.
         
         for retry in range(max_retries):
             for key_attempt in range(len(api_keys)):
-                try:
-                    api_key = get_next_api_key()
-                    
-                    response = completion(
-                        messages=messages,
+            try:
+                api_key = get_next_api_key()
+                
+                response = completion(
+                    messages=messages,
                         model="gemini/gemini-2.5-flash",
-                        temperature=0.0,
-                        api_key=api_key,
-                    )
-                    break
+                    temperature=0.0,
+                    api_key=api_key,
+                )
+                break
                 except RateLimitError as e:
                     last_error = e
                     # Extract retry delay from error if available, otherwise use exponential backoff
@@ -131,10 +131,10 @@ Just output the single word answer.
                     print(f"Baseline agent: Rate limited (retry {retry + 1}/{max_retries}), waiting {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
                     break  # Break inner loop to retry with backoff
-                except Exception as e:
-                    last_error = e
+            except Exception as e:
+                last_error = e
                     print(f"Baseline agent: API call failed (key {key_attempt + 1}/{len(api_keys)}): {type(e).__name__}: {str(e)[:100]}")
-                    continue
+                continue
             
             if response is not None:
                 break
@@ -177,11 +177,29 @@ def start_baseline_white_agent(host="localhost", port=9002):
     print(f"Host: {host}, Port: {port}")
     print("=" * 60)
     
-    # Use public URL from environment if available (for Cloud Run)
+    print(f"Environment variables for URL resolution:")
+    print(f"  AGENT_URL: {os.environ.get('AGENT_URL', 'not set')}")
+    print(f"  A2A_AGENT_URL: {os.environ.get('A2A_AGENT_URL', 'not set')}")
+    print(f"  PUBLIC_URL: {os.environ.get('PUBLIC_URL', 'not set')}")
+    
+    # URL priority (for AgentBeats controller compatibility):
+    # 1. AGENT_URL - set by earthshaker controller with full /to_agent/{cagent_id} path
+    # 2. A2A_AGENT_URL - alternative variable name
+    # 3. PUBLIC_URL - base controller URL (for Cloud Run)
+    # 4. Local URL - for local development
+    agent_url = os.environ.get("AGENT_URL")
+    a2a_url = os.environ.get("A2A_AGENT_URL")
     public_url = os.environ.get("PUBLIC_URL")
-    if public_url:
+    
+    if agent_url:
+        url = agent_url
+        print(f"Using AGENT_URL from controller: {url}")
+    elif a2a_url:
+        url = a2a_url
+        print(f"Using A2A_AGENT_URL from controller: {url}")
+    elif public_url:
         url = public_url
-        print(f"Using public URL from environment: {url}")
+        print(f"Using PUBLIC_URL from environment: {url}")
     else:
         url = f"http://{host}:{port}"
         print(f"Using local URL: {url}")

@@ -26,10 +26,11 @@ EXPOSE 8080
 # Environment variables
 ENV HOST=0.0.0.0
 ENV AGENT_ROLE=autoform
+ENV HTTPS_ENABLED=true
 
 # Make run.sh executable
 RUN chmod +x run.sh
 
-# Start with AgentBeats controller
+# Run via AgentBeats controller (handles /to_agent/{cagent_id} routing and /agents/{id} status)
 CMD ["agentbeats", "run_ctrl"]
 

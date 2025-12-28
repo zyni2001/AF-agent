@@ -147,13 +147,13 @@ echo "✓ Service deployed at: ${SERVICE_URL}"
 # Extract domain from SERVICE_URL (remove https:// prefix for CLOUDRUN_HOST)
 CLOUDRUN_HOST="${SERVICE_URL#https://}"
 
-# Update PUBLIC_URL and CLOUDRUN_HOST environment variables
+# Update PUBLIC_URL, CLOUDRUN_HOST, and HTTPS_ENABLED environment variables
 echo ""
-echo "Updating environment variables with PUBLIC_URL and CLOUDRUN_HOST..."
+echo "Updating environment variables with PUBLIC_URL, CLOUDRUN_HOST, and HTTPS_ENABLED..."
 gcloud run services update ${SERVICE_NAME} \
     --platform managed \
     --region ${REGION} \
-    --update-env-vars "GEMINI_API_KEY=${GEMINI_API_KEY},PUBLIC_URL=${SERVICE_URL},CLOUDRUN_HOST=${CLOUDRUN_HOST},AGENT_ROLE=autoform" \
+    --update-env-vars "GEMINI_API_KEY=${GEMINI_API_KEY},PUBLIC_URL=${SERVICE_URL},CLOUDRUN_HOST=${CLOUDRUN_HOST},HTTPS_ENABLED=true,AGENT_ROLE=autoform" \
     --quiet
 
 echo ""

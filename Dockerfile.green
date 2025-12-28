@@ -28,11 +28,11 @@ EXPOSE 8080
 # Set environment variables
 ENV HOST=0.0.0.0
 ENV AGENT_ROLE=green
+ENV HTTPS_ENABLED=true
 
 # Make run.sh executable
 RUN chmod +x run.sh
 
-# Start the AgentBeats controller
-# The controller will use AGENT_PORT (or PORT from Cloud Run) and launch run.sh
+# Run via AgentBeats controller (handles /to_agent/{cagent_id} routing and /agents/{id} status)
 CMD ["agentbeats", "run_ctrl"]
 

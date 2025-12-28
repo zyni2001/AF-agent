@@ -1,0 +1,251 @@
+name: Test and Publish Agent
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0, v1.1.0
+
+jobs:
+  test-green-agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/folio-green-agent
+          tags: |
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Green Agent Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.green
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+          platforms: linux/amd64
+
+      - name: Start green agent container
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          docker run -d -p 9001:8080 --name green-agent-container \
+            -e GEMINI_API_KEY="${GEMINI_API_KEY}" \
+            -e AGENT_ROLE=green \
+            -e HOST=0.0.0.0 \
+            $(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          echo "Waiting for agent to be ready..."
+          timeout 60 bash -c 'until curl -sf http://localhost:9001/status > /dev/null 2>&1; do sleep 2; done' || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest pytest-asyncio httpx a2a-sdk
+
+      - name: Run tests
+        run: pytest tests/ -v --agent-url http://localhost:9001
+
+      - name: Stop container and show logs
+        if: always()
+        run: |
+          echo "=== Green Agent Container Logs ==="
+          docker logs green-agent-container || true
+          docker stop green-agent-container || true
+
+  test-baseline-agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/folio-baseline-agent
+          tags: |
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Baseline Agent Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.baseline
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+          platforms: linux/amd64
+
+      - name: Start baseline agent container
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          docker run -d -p 9002:8080 --name baseline-agent-container \
+            -e GEMINI_API_KEY="${GEMINI_API_KEY}" \
+            -e AGENT_ROLE=baseline \
+            -e HOST=0.0.0.0 \
+            $(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          echo "Waiting for agent to be ready..."
+          timeout 60 bash -c 'until curl -sf http://localhost:9002/status > /dev/null 2>&1; do sleep 2; done' || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest pytest-asyncio httpx a2a-sdk
+
+      - name: Run tests
+        run: pytest tests/ -v --agent-url http://localhost:9002
+
+      - name: Stop container and show logs
+        if: always()
+        run: |
+          echo "=== Baseline Agent Container Logs ==="
+          docker logs baseline-agent-container || true
+          docker stop baseline-agent-container || true
+
+  test-autoform-agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/folio-autoform-agent
+          tags: |
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Autoform Agent Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.autoform
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+          platforms: linux/amd64
+
+      - name: Start autoform agent container
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          docker run -d -p 9003:8080 --name autoform-agent-container \
+            -e GEMINI_API_KEY="${GEMINI_API_KEY}" \
+            -e AGENT_ROLE=autoform \
+            -e HOST=0.0.0.0 \
+            $(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          echo "Waiting for agent to be ready..."
+          timeout 60 bash -c 'until curl -sf http://localhost:9003/status > /dev/null 2>&1; do sleep 2; done' || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest pytest-asyncio httpx a2a-sdk
+
+      - name: Run tests
+        run: pytest tests/ -v --agent-url http://localhost:9003
+
+      - name: Stop container and show logs
+        if: always()
+        run: |
+          echo "=== Autoform Agent Container Logs ==="
+          docker logs autoform-agent-container || true
+          docker stop autoform-agent-container || true
+
+  publish:
+    needs: [test-green-agent, test-baseline-agent, test-autoform-agent]
+    runs-on: ubuntu-latest
+    if: success() && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Green Agent
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.green
+          push: true
+          tags: ghcr.io/${{ github.repository }}/folio-green-agent:latest
+
+      - name: Build and push Baseline Agent
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.baseline
+          push: true
+          tags: ghcr.io/${{ github.repository }}/folio-baseline-agent:latest
+
+      - name: Build and push Autoform Agent
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.autoform
+          push: true
+          tags: ghcr.io/${{ github.repository }}/folio-autoform-agent:latest
+
+      - name: Output image digest
+        run: |
+          echo "## Docker Images Published :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- folio-green-agent" >> $GITHUB_STEP_SUMMARY
+          echo "- folio-baseline-agent" >> $GITHUB_STEP_SUMMARY
+          echo "- folio-autoform-agent" >> $GITHUB_STEP_SUMMARY
+

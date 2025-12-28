@@ -174,11 +174,11 @@ echo ""
 # Extract domain from SERVICE_URL (remove https:// prefix for CLOUDRUN_HOST)
 CLOUDRUN_HOST="${SERVICE_URL#https://}"
 
-# Update with PUBLIC_URL, CLOUDRUN_HOST, and AGENT_ROLE
-echo "Updating environment variables with PUBLIC_URL, CLOUDRUN_HOST, and AGENT_ROLE..."
+# Update with PUBLIC_URL, CLOUDRUN_HOST, HTTPS_ENABLED, and AGENT_ROLE
+echo "Updating environment variables with PUBLIC_URL, CLOUDRUN_HOST, HTTPS_ENABLED, and AGENT_ROLE..."
 gcloud run services update folio-baseline-agent \
   --region $REGION \
-  --update-env-vars "GEMINI_API_KEY=$API_KEY,PUBLIC_URL=$SERVICE_URL,CLOUDRUN_HOST=$CLOUDRUN_HOST,AGENT_ROLE=baseline" \
+  --update-env-vars "GEMINI_API_KEY=$API_KEY,PUBLIC_URL=$SERVICE_URL,CLOUDRUN_HOST=$CLOUDRUN_HOST,HTTPS_ENABLED=true,AGENT_ROLE=baseline" \
   --quiet
 
 echo ""

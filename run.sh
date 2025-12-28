@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# AgentBeats controller launcher script
-# The controller will call this script to start the agent
+# Agent launcher script
+# Can be called by AgentBeats controller (run_ctrl) or directly
 
 set -euo pipefail
 
 # Read environment variables
+# PORT is set by Cloud Run, AGENT_PORT may be set by controller
 HOST=${HOST:-0.0.0.0}
 PORT=${AGENT_PORT:-${PORT:-8080}}
 ROLE=${AGENT_ROLE:-green}
@@ -13,6 +14,11 @@ echo "====================================="
 echo "Starting ${ROLE} agent"
 echo "Host: ${HOST}"
 echo "Port: ${PORT}"
+echo "PUBLIC_URL: ${PUBLIC_URL:-not set}"
+echo "AGENT_URL: ${AGENT_URL:-not set}"
+echo "====================================="
+echo "ALL ENVIRONMENT VARIABLES (for debugging):"
+env | grep -i "agent\|url\|port\|host\|cagent" | sort || true
 echo "====================================="
 
 # Launch the appropriate agent based on AGENT_ROLE

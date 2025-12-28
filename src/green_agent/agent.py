@@ -292,13 +292,32 @@ Detailed results available in metrics JSON.
 
 def start_green_agent(agent_name="folio_green_agent", host="localhost", port=9001):
     print("Starting FOLIO green agent...")
+    print(f"Environment variables for URL resolution:")
+    print(f"  AGENT_URL: {os.environ.get('AGENT_URL', 'not set')}")
+    print(f"  A2A_AGENT_URL: {os.environ.get('A2A_AGENT_URL', 'not set')}")  
+    print(f"  PUBLIC_URL: {os.environ.get('PUBLIC_URL', 'not set')}")
+    print(f"  CLOUDRUN_HOST: {os.environ.get('CLOUDRUN_HOST', 'not set')}")
+    
     agent_card_dict = load_agent_card_toml(agent_name)
     
-    # Use public URL from environment if available (for Cloud Run)
+    # URL priority (for AgentBeats controller compatibility):
+    # 1. AGENT_URL - set by earthshaker controller with full /to_agent/{cagent_id} path
+    # 2. A2A_AGENT_URL - alternative variable name
+    # 3. PUBLIC_URL - base controller URL (for Cloud Run)
+    # 4. Local URL - for local development
+    agent_url = os.environ.get("AGENT_URL")
+    a2a_url = os.environ.get("A2A_AGENT_URL")
     public_url = os.environ.get("PUBLIC_URL")
-    if public_url:
+    
+    if agent_url:
+        url = agent_url
+        print(f"Using AGENT_URL from controller: {url}")
+    elif a2a_url:
+        url = a2a_url
+        print(f"Using A2A_AGENT_URL from controller: {url}")
+    elif public_url:
         url = public_url
-        print(f"Using public URL from environment: {url}")
+        print(f"Using PUBLIC_URL from environment: {url}")
     else:
         url = f"http://{host}:{port}"
         print(f"Using local URL: {url}")
