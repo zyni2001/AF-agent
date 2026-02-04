@@ -130,7 +130,7 @@ gcloud run deploy ${SERVICE_NAME} \
     --memory 1Gi \
     --cpu 1 \
     --timeout 300s \
-    --min-instances 1 \
+    --min-instances 0 \
     --max-instances 5 \
     --quiet
 

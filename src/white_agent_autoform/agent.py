@@ -217,28 +217,28 @@ Please generate the FIXED Z3 Python code:"""
                 base_delay = 7  # Base delay in seconds (to stay under 10 req/min)
                 
                 for rate_retry in range(max_rate_limit_retries):
-                for api_attempt in range(len(GEMINI_API_KEYS)):
-                    try:
-                        api_key = get_next_api_key()
-                        os.environ['GEMINI_API_KEY'] = api_key
-                        
-                        response = completion(
-                            messages=messages,
+                    for api_attempt in range(len(GEMINI_API_KEYS)):
+                        try:
+                            api_key = get_next_api_key()
+                            os.environ['GEMINI_API_KEY'] = api_key
+                            
+                            response = completion(
+                                messages=messages,
                                 model="gemini/gemini-2.5-flash",
-                            api_key=api_key,
-                            temperature=0.0
-                        )
-                        break
+                                api_key=api_key,
+                                temperature=0.0
+                            )
+                            break
                         except RateLimitError as e:
                             last_error = e
                             retry_delay = base_delay * (2 ** rate_retry)
                             print(f"Autoform agent: Rate limited (retry {rate_retry + 1}/{max_rate_limit_retries}), waiting {retry_delay}s...")
                             await asyncio.sleep(retry_delay)
                             break  # Break inner loop to retry with backoff
-                    except Exception as e:
-                        last_error = e
+                        except Exception as e:
+                            last_error = e
                             print(f"Autoform agent: API call failed (key {api_attempt + 1}/{len(GEMINI_API_KEYS)}): {type(e).__name__}: {str(e)[:100]}")
-                        continue
+                            continue
                     
                     if response is not None:
                         break

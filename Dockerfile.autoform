@@ -1,15 +1,18 @@
-# Autoformalization White Agent - Z3 Code Generation
+# Dockerfile for FOLIO Autoformalization White Agent (Z3 Code Generation)
 FROM python:3.13-slim
 
 WORKDIR /app
+
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
 COPY pyproject.toml ./
 COPY src/ ./src/
 COPY main.py ./
-COPY run.sh ./
+COPY entrypoint.sh ./
 
-# Install dependencies (including z3-solver)
+# Install Python dependencies (including z3-solver for autoformalization)
 RUN pip install --no-cache-dir \
     a2a-sdk[http-server]>=0.3.8 \
     earthshaker>=0.1.0 \
@@ -20,17 +23,15 @@ RUN pip install --no-cache-dir \
     python-dotenv>=1.0.0 \
     z3-solver>=4.12.0
 
-# Expose port
+# Expose port for the agent
 EXPOSE 8080
 
-# Environment variables
-ENV HOST=0.0.0.0
+# Set environment variables
 ENV AGENT_ROLE=autoform
-ENV HTTPS_ENABLED=true
+ENV PYTHONUNBUFFERED=1
 
-# Make run.sh executable
-RUN chmod +x run.sh
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
 
-# Run via AgentBeats controller (handles /to_agent/{cagent_id} routing and /agents/{id} status)
-CMD ["agentbeats", "run_ctrl"]
-
+# Use entrypoint that accepts --host, --port, --card-url arguments
+ENTRYPOINT ["./entrypoint.sh"]

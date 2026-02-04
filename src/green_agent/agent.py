@@ -8,9 +8,9 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCard, SendMessageSuccessResponse, Message, JSONRPCErrorResponse
-from a2a.utils import new_agent_text_message, get_text_parts
+from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
+from a2a.types import AgentCard, SendMessageSuccessResponse, Message, JSONRPCErrorResponse, Part, DataPart, TextPart, TaskState
+from a2a.utils import new_agent_text_message, get_text_parts, new_task
 
 import sys
 import os
@@ -236,42 +236,150 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
     return metrics
 
 
+TERMINAL_STATES = {
+    TaskState.completed,
+    TaskState.canceled,
+    TaskState.failed,
+    TaskState.rejected,
+}
+
+
 class FolioGreenAgentExecutor(AgentExecutor):
     def __init__(self):
         pass
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        # Parse the task
+        # Handle task lifecycle properly (like debate example)
+        task = context.current_task
+        if task and task.status.state in TERMINAL_STATES:
+            print(f"Green agent: Task {task.id} already processed (state: {task.status.state})")
+            return
+        
+        if not task:
+            task = new_task(context.message)
+            await event_queue.enqueue_event(task)
+        
+        # Create TaskUpdater for proper artifact handling
+        updater = TaskUpdater(event_queue, task.id, context.context_id)
+        await updater.start_work()
+        
+        # Parse the request
         print("Green agent: Received evaluation request, parsing...")
         user_input = context.get_user_input()
-        tags = parse_tags(user_input)
+        print(f"Green agent: Raw input: {user_input[:500] if user_input else 'None'}...")
         
-        white_agent_url = tags.get("white_agent_url")
-        if not white_agent_url:
-            error_msg = "ERROR: No <white_agent_url> tag found in request"
+        participants_to_eval = []
+        max_examples = None
+        
+        # Try to parse as JSON (AgentBeats format)
+        try:
+            import json
+            data = json.loads(user_input)
+            print(f"Green agent: Parsed JSON data: {data}")
+            
+            # AgentBeats sends participants and config
+            participants = data.get("participants", [])
+            config = data.get("config", {})
+            
+            # Build list of all participants to evaluate
+            if participants:
+                if isinstance(participants, list):
+                    for p in participants:
+                        endpoint = p.get("endpoint")
+                        name = p.get("name", "unknown")
+                        agent_id = p.get("agent_id", name)
+                        if endpoint:
+                            participants_to_eval.append({
+                                "name": name,
+                                "agent_id": agent_id,
+                                "endpoint": endpoint
+                            })
+                elif isinstance(participants, dict):
+                    # participants might be {role: endpoint/info} format
+                    for role, info in participants.items():
+                        if isinstance(info, str):
+                            participants_to_eval.append({
+                                "name": role,
+                                "agent_id": role,
+                                "endpoint": info
+                            })
+                        elif isinstance(info, dict):
+                            participants_to_eval.append({
+                                "name": role,
+                                "agent_id": info.get("agent_id", role),
+                                "endpoint": info.get("endpoint")
+                            })
+            
+            # Get max_examples from config
+            max_examples = config.get("max_examples")
+            
+            print(f"Green agent: Found {len(participants_to_eval)} participants to evaluate")
+            for p in participants_to_eval:
+                print(f"  - {p['name']}: {p['endpoint']}")
+        except json.JSONDecodeError:
+            print("Green agent: Not JSON, trying tag-based parsing...")
+            # Fall back to tag-based parsing (for local testing)
+            tags = parse_tags(user_input)
+            white_agent_url = tags.get("white_agent_url")
+            max_examples_str = tags.get("max_examples")
+            max_examples = int(max_examples_str) if max_examples_str else None
+            if white_agent_url:
+                participants_to_eval.append({
+                    "name": "agent",
+                    "agent_id": "agent",
+                    "endpoint": white_agent_url
+                })
+        
+        if not participants_to_eval:
+            error_msg = "ERROR: No participants found in request (tried JSON and tags)"
             print(error_msg)
+            print(f"Green agent: Full input was: {user_input}")
             await event_queue.enqueue_event(new_agent_text_message(error_msg))
             return
         
-        # Get optional max_examples parameter
-        max_examples_str = tags.get("max_examples")
-        max_examples = int(max_examples_str) if max_examples_str else None
-        
-        print(f"Green agent: Evaluating white agent at {white_agent_url}")
         if max_examples:
-            print(f"Green agent: Limited to {max_examples} examples")
+            print(f"Green agent: Limited to {max_examples} examples per agent")
         
-        # Run evaluation
-        timestamp_started = time.time()
-        metrics = await evaluate_white_agent_on_folio(white_agent_url, max_examples=max_examples)
-        metrics["total_evaluation_time"] = time.time() - timestamp_started
+        # Evaluate ALL participants and collect results
+        all_results = []
+        result_texts = []
         
-        # Format result message
-        result_text = f"""✅ FOLIO Evaluation Complete
-
-White Agent: {white_agent_url}
-
-Results:
+        for participant in participants_to_eval:
+            agent_name = participant["name"]
+            agent_id = participant["agent_id"]
+            endpoint = participant["endpoint"]
+            
+            print(f"\n{'='*60}")
+            print(f"Green agent: Evaluating participant '{agent_name}' at {endpoint}")
+            print(f"{'='*60}")
+            
+            # Run evaluation for this participant
+            timestamp_started = time.time()
+            metrics = await evaluate_white_agent_on_folio(endpoint, max_examples=max_examples)
+            metrics["total_evaluation_time"] = time.time() - timestamp_started
+            
+            # Structure results for this participant
+            # Use 'id' and 'score' to match default AgentBeats query format
+            participant_result = {
+                "id": agent_name,  # Required by default AgentBeats query
+                "score": round(metrics['accuracy'] * 100, 2),  # Required by default AgentBeats query
+                "accuracy": round(metrics['accuracy'] * 100, 2),
+                "agent": agent_name,  # Keep for backwards compatibility
+                "agent_id": agent_id,
+                "pass_rate": round(metrics['accuracy'] * 100, 2),
+                "correct": metrics['correct'],
+                "total": metrics['total_cases'],
+                "incorrect": metrics['incorrect'],
+                "parse_errors": metrics['parse_errors'],
+                "time_used": round(metrics['total_evaluation_time'], 2),
+                "avg_time_per_case": round(metrics['avg_time_per_case'], 2),
+                "max_score": metrics['total_cases']
+            }
+            all_results.append(participant_result)
+            
+            # Build human-readable text for this participant
+            result_texts.append(f"""
+Agent: {agent_name}
   • Total Cases: {metrics['total_cases']}
   • Correct: {metrics['correct']}
   • Incorrect: {metrics['incorrect']}
@@ -279,12 +387,41 @@ Results:
   • Accuracy: {metrics['accuracy']:.2%}
   • Avg Time/Case: {metrics['avg_time_per_case']:.2f}s
   • Total Time: {metrics['total_evaluation_time']:.2f}s
+""")
+        
+        # Format combined result message
+        result_text = f"""✅ FOLIO Evaluation Complete
 
+Evaluated {len(participants_to_eval)} agent(s):
+{"".join(result_texts)}
 Detailed results available in metrics JSON.
 """
         
-        print("Green agent: Sending results...")
-        await event_queue.enqueue_event(new_agent_text_message(result_text))
+        # Structure final results for AgentBeats leaderboard
+        print(f"\nGreen agent: Sending results for {len(all_results)} participants...")
+        
+        # For single participant, emit fields directly at top level
+        # Query: SELECT id, score, accuracy FROM results
+        if len(all_results) == 1:
+            structured_results = all_results[0]
+        else:
+            # For multiple, use array
+            structured_results = {"data": all_results}
+        
+        print(f"Green agent: Structured results: {json.dumps(structured_results)}")
+        
+        # Emit results as A2A artifact with DataPart (AgentBeats expects this format)
+        await updater.add_artifact(
+            parts=[
+                Part(root=TextPart(text=result_text)),
+                Part(root=DataPart(data=structured_results)),
+            ],
+            name="assessment_results",
+        )
+        
+        # Complete the task (this triggers the client to capture artifacts)
+        await updater.complete()
+        print(f"Green agent: Artifact emitted successfully via TaskUpdater")
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise NotImplementedError
