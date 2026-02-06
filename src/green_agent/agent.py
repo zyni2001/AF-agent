@@ -186,16 +186,15 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
         raise RuntimeError(f"Could not resolve agent card from {white_agent_url}")
     print(f"Agent card resolved: {white_agent_card.name}")
     
-    # Create shared HTTP client with connection pooling
-    http_client = httpx.AsyncClient(timeout=120.0)
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
     
     # Build async tasks for all samples
+    # NOTE: Each task creates its own httpx client to avoid shared-client issues
     tasks = []
     for sample_num, (idx, row) in enumerate(df.iterrows(), start=1):
         tasks.append(
             _evaluate_single_sample(
-                white_agent_card, http_client, semaphore,
+                white_agent_card, None, semaphore,
                 sample_num, total, idx, row
             )
         )
@@ -207,7 +206,6 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     eval_elapsed = time.time() - eval_start
-    await http_client.aclose()
     
     # Aggregate results
     metrics = {
