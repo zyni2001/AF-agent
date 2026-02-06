@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./
 COPY src/ ./src/
 COPY main.py ./
-COPY entrypoint.sh ./
+COPY run.sh ./
 
 # Copy data directory
 COPY data/ ./data/
@@ -30,10 +30,12 @@ EXPOSE 8080
 
 # Set environment variables
 ENV AGENT_ROLE=green
+ENV AGENT_PORT=9001
 ENV PYTHONUNBUFFERED=1
 
-# Make entrypoint executable
-RUN chmod +x entrypoint.sh
+# Make run.sh executable
+RUN chmod +x run.sh
 
-# Use entrypoint that accepts --host, --port, --card-url arguments
-ENTRYPOINT ["./entrypoint.sh"]
+# Use AgentBeats controller (calls run.sh internally)
+# ENTRYPOINT so docker-compose args (--host, --port, --card-url) are appended
+ENTRYPOINT ["agentbeats", "run_ctrl"]

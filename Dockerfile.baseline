@@ -34,4 +34,5 @@ ENV PYTHONUNBUFFERED=1
 RUN chmod +x run.sh
 
 # Use AgentBeats controller (calls run.sh internally)
-CMD ["agentbeats", "run_ctrl"]
+# ENTRYPOINT so docker-compose args (--host, --port, --card-url) are appended
+ENTRYPOINT ["agentbeats", "run_ctrl"]
