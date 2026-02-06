@@ -90,3 +90,31 @@ async def send_message(
     req = SendMessageRequest(id=request_id, params=params)
     response = await client.send_message(request=req)
     return response
+
+
+async def send_message_with_card(
+    card: AgentCard, message: str, httpx_client: httpx.AsyncClient = None,
+    task_id=None, context_id=None, timeout=120.0
+) -> SendMessageResponse:
+    """Send message using a pre-resolved agent card (avoids repeated card lookups).
+    
+    This is optimized for batch/parallel evaluation where the card is resolved once.
+    """
+    if httpx_client is None:
+        httpx_client = httpx.AsyncClient(timeout=timeout)
+    client = A2AClient(httpx_client=httpx_client, agent_card=card)
+
+    message_id = uuid.uuid4().hex
+    params = MessageSendParams(
+        message=Message(
+            role=Role.user,
+            parts=[Part(TextPart(text=message))],
+            message_id=message_id,
+            task_id=task_id,
+            context_id=context_id,
+        )
+    )
+    request_id = uuid.uuid4().hex
+    req = SendMessageRequest(id=request_id, params=params)
+    response = await client.send_message(request=req)
+    return response

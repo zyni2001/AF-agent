@@ -4,6 +4,8 @@ import uvicorn
 import tomllib
 import json
 import time
+import asyncio
+import httpx
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -20,6 +22,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from src.my_util import parse_tags, my_a2a
 from src.folio_utils.dataset import load_validation_dataset, format_folio_problem_as_text
 
+# Concurrency limit for parallel evaluation
+MAX_CONCURRENT = 10
+
 
 def load_agent_card_toml(agent_name):
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,53 +33,26 @@ def load_agent_card_toml(agent_name):
         return tomllib.load(f)
 
 
-async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int = None) -> dict:
-    """Evaluate a white agent on FOLIO validation dataset.
+async def _evaluate_single_sample(
+    white_agent_card, http_client, semaphore, sample_num, total, idx, row
+) -> dict:
+    """Evaluate a single FOLIO sample against the white agent (concurrency-safe).
     
-    Args:
-        white_agent_url: URL of the white agent to evaluate
-        max_examples: If provided, only test on first N examples
-    
-    Returns:
-        dict with evaluation metrics
+    Returns a result dict for this sample.
     """
-    print(f"\n{'='*60}")
-    print(f"Starting FOLIO Evaluation")
-    print(f"White agent: {white_agent_url}")
-    print(f"{'='*60}\n")
-    
-    # Load validation dataset
-    df = load_validation_dataset(max_examples=max_examples)
-    
-    metrics = {
-        "total_cases": 0,
-        "correct": 0,
-        "incorrect": 0,
-        "parse_errors": 0,
-        "total_time": 0.0,
-        "results": []
-    }
-    
-    for idx, row in df.iterrows():
-        metrics["total_cases"] += 1
+    async with semaphore:
         story_id = row.get('story_id', idx)
         expected_label = str(row['label']).strip()
-        
-        print(f"\n[{metrics['total_cases']}/{len(df)}] Story ID: {story_id}")
-        print(f"  Expected: {expected_label}")
-        
-        # Format problem as text
         problem_text = format_folio_problem_as_text(row)
         
-        # Send to white agent
+        print(f"  [{sample_num}/{total}] Story {story_id} (expected: {expected_label}) — sending...")
+        
         try:
             start_time = time.time()
-            
-            print(f"  Sending to white agent...")
-            response = await my_a2a.send_message(white_agent_url, problem_text)
-            
+            response = await my_a2a.send_message_with_card(
+                white_agent_card, problem_text, httpx_client=http_client
+            )
             elapsed_time = time.time() - start_time
-            metrics["total_time"] += elapsed_time
             
             # Parse response
             res_root = response.root
@@ -82,71 +60,48 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
             # Handle error responses from white agent
             if isinstance(res_root, JSONRPCErrorResponse):
                 error_msg = res_root.error.message if hasattr(res_root, 'error') else "Unknown error"
-                print(f"  ✗ ERROR: White agent returned error: {error_msg}")
-                # Treat agent errors as "Uncertain" - can't determine the answer
                 predicted_label = "Uncertain"
                 is_correct = (expected_label.lower() == "uncertain")
-                if is_correct:
-                    metrics["correct"] += 1
-                    print(f"  ✓ CORRECT (error treated as Uncertain)")
-                else:
-                    metrics["incorrect"] += 1
-                    print(f"  ✗ INCORRECT (expected {expected_label}, got Uncertain due to error)")
-                
-                metrics["results"].append({
-                    "story_id": story_id,
-                    "expected": expected_label,
-                    "predicted": "Uncertain",
-                    "correct": is_correct,
-                    "time": elapsed_time,
-                    "error": error_msg
-                })
-                continue
+                symbol = "✓" if is_correct else "✗"
+                print(f"  [{sample_num}/{total}] Story {story_id}: {symbol} ERROR→Uncertain (expected {expected_label}) [{elapsed_time:.1f}s]")
+                return {
+                    "story_id": story_id, "expected": expected_label,
+                    "predicted": "Uncertain", "correct": is_correct,
+                    "time": elapsed_time, "error": error_msg,
+                    "status": "error_response"
+                }
             
             if not isinstance(res_root, SendMessageSuccessResponse):
-                print(f"  ✗ ERROR: Unexpected response type: {type(res_root)}")
-                metrics["parse_errors"] += 1
-                metrics["results"].append({
-                    "story_id": story_id,
-                    "expected": expected_label,
-                    "predicted": "ERROR",
-                    "correct": False,
-                    "time": elapsed_time,
-                    "error": f"Invalid response type: {type(res_root)}"
-                })
-                continue
+                print(f"  [{sample_num}/{total}] Story {story_id}: ✗ Bad response type [{elapsed_time:.1f}s]")
+                return {
+                    "story_id": story_id, "expected": expected_label,
+                    "predicted": "ERROR", "correct": False,
+                    "time": elapsed_time, "error": f"Invalid response type: {type(res_root)}",
+                    "status": "parse_error"
+                }
             
             res_result = res_root.result
             if not isinstance(res_result, Message):
-                print(f"  ✗ ERROR: Expected Message result")
-                metrics["parse_errors"] += 1
-                metrics["results"].append({
-                    "story_id": story_id,
-                    "expected": expected_label,
-                    "predicted": "ERROR",
-                    "correct": False,
-                    "time": elapsed_time,
-                    "error": "Invalid result type"
-                })
-                continue
+                print(f"  [{sample_num}/{total}] Story {story_id}: ✗ Not a Message [{elapsed_time:.1f}s]")
+                return {
+                    "story_id": story_id, "expected": expected_label,
+                    "predicted": "ERROR", "correct": False,
+                    "time": elapsed_time, "error": "Invalid result type",
+                    "status": "parse_error"
+                }
             
             # Extract text from response
             text_parts = get_text_parts(res_result.parts)
             if not text_parts:
-                print(f"  ✗ ERROR: No text in response")
-                metrics["parse_errors"] += 1
-                metrics["results"].append({
-                    "story_id": story_id,
-                    "expected": expected_label,
-                    "predicted": "ERROR",
-                    "correct": False,
-                    "time": elapsed_time,
-                    "error": "No text in response"
-                })
-                continue
+                print(f"  [{sample_num}/{total}] Story {story_id}: ✗ No text [{elapsed_time:.1f}s]")
+                return {
+                    "story_id": story_id, "expected": expected_label,
+                    "predicted": "ERROR", "correct": False,
+                    "time": elapsed_time, "error": "No text in response",
+                    "status": "parse_error"
+                }
             
             white_text = text_parts[0].strip()
-            print(f"  White agent response: {white_text[:100]}...")
             
             # Parse the answer (look for True/False/Uncertain)
             white_text_lower = white_text.lower().strip()
@@ -174,49 +129,115 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
                         break
             
             if predicted_label is None:
-                print(f"  ✗ ERROR: Could not parse answer from: {white_text[:200]}")
-                metrics["parse_errors"] += 1
-                metrics["results"].append({
-                    "story_id": story_id,
-                    "expected": expected_label,
-                    "predicted": "PARSE_ERROR",
-                    "correct": False,
-                    "time": elapsed_time,
-                    "error": "Could not parse answer"
-                })
-                continue
+                print(f"  [{sample_num}/{total}] Story {story_id}: ✗ PARSE_ERROR [{elapsed_time:.1f}s]")
+                return {
+                    "story_id": story_id, "expected": expected_label,
+                    "predicted": "PARSE_ERROR", "correct": False,
+                    "time": elapsed_time, "error": "Could not parse answer",
+                    "status": "parse_error"
+                }
             
-            print(f"  Predicted: {predicted_label}")
-            
-            # Compare with expected
             is_correct = (predicted_label.lower() == expected_label.lower())
+            symbol = "✓" if is_correct else "✗"
+            print(f"  [{sample_num}/{total}] Story {story_id}: {symbol} {predicted_label} (expected {expected_label}) [{elapsed_time:.1f}s]")
             
-            if is_correct:
-                metrics["correct"] += 1
-                print(f"  ✓ CORRECT")
-            else:
-                metrics["incorrect"] += 1
-                print(f"  ✗ INCORRECT (expected {expected_label}, got {predicted_label})")
-            
-            metrics["results"].append({
-                "story_id": story_id,
-                "expected": expected_label,
-                "predicted": predicted_label,
-                "correct": is_correct,
-                "time": elapsed_time
-            })
+            return {
+                "story_id": story_id, "expected": expected_label,
+                "predicted": predicted_label, "correct": is_correct,
+                "time": elapsed_time, "status": "ok"
+            }
             
         except Exception as e:
-            print(f"  ✗ EXCEPTION: {e}")
+            print(f"  [{sample_num}/{total}] Story {story_id}: ✗ EXCEPTION: {e}")
+            return {
+                "story_id": story_id, "expected": expected_label,
+                "predicted": "EXCEPTION", "correct": False,
+                "time": 0.0, "error": str(e), "status": "exception"
+            }
+
+
+async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int = None) -> dict:
+    """Evaluate a white agent on FOLIO validation dataset using parallel requests.
+    
+    Uses asyncio.Semaphore to limit concurrency to MAX_CONCURRENT (10) simultaneous
+    requests, keeping total evaluation time under the 5-minute client timeout.
+    
+    Args:
+        white_agent_url: URL of the white agent to evaluate
+        max_examples: If provided, only test on first N examples
+    
+    Returns:
+        dict with evaluation metrics
+    """
+    print(f"\n{'='*60}")
+    print(f"Starting FOLIO Evaluation (parallel, max {MAX_CONCURRENT} concurrent)")
+    print(f"White agent: {white_agent_url}")
+    print(f"{'='*60}\n")
+    
+    # Load validation dataset
+    df = load_validation_dataset(max_examples=max_examples)
+    total = len(df)
+    print(f"Loaded {total} samples")
+    
+    # Resolve agent card ONCE (avoid 203 redundant lookups)
+    print("Resolving white agent card...")
+    white_agent_card = await my_a2a.get_agent_card(white_agent_url)
+    if white_agent_card is None:
+        raise RuntimeError(f"Could not resolve agent card from {white_agent_url}")
+    print(f"Agent card resolved: {white_agent_card.name}")
+    
+    # Create shared HTTP client with connection pooling
+    http_client = httpx.AsyncClient(timeout=120.0)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+    
+    # Build async tasks for all samples
+    tasks = []
+    for sample_num, (idx, row) in enumerate(df.iterrows(), start=1):
+        tasks.append(
+            _evaluate_single_sample(
+                white_agent_card, http_client, semaphore,
+                sample_num, total, idx, row
+            )
+        )
+    
+    print(f"Dispatching {total} samples with concurrency={MAX_CONCURRENT}...")
+    eval_start = time.time()
+    
+    # Run all tasks concurrently (semaphore limits actual parallelism)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    eval_elapsed = time.time() - eval_start
+    await http_client.aclose()
+    
+    # Aggregate results
+    metrics = {
+        "total_cases": total,
+        "correct": 0,
+        "incorrect": 0,
+        "parse_errors": 0,
+        "total_time": eval_elapsed,
+        "results": []
+    }
+    
+    for r in results:
+        if isinstance(r, Exception):
+            # asyncio.gather returned an exception
             metrics["parse_errors"] += 1
             metrics["results"].append({
-                "story_id": story_id,
-                "expected": expected_label,
-                "predicted": "EXCEPTION",
-                "correct": False,
-                "time": 0.0,
-                "error": str(e)
+                "story_id": "unknown", "expected": "unknown",
+                "predicted": "EXCEPTION", "correct": False,
+                "time": 0.0, "error": str(r)
             })
+            continue
+        
+        metrics["results"].append(r)
+        status = r.get("status", "")
+        if r.get("correct"):
+            metrics["correct"] += 1
+        elif status in ("parse_error", "exception"):
+            metrics["parse_errors"] += 1
+        else:
+            metrics["incorrect"] += 1
     
     # Calculate final metrics
     metrics["accuracy"] = metrics["correct"] / metrics["total_cases"] if metrics["total_cases"] > 0 else 0.0
@@ -238,7 +259,7 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
     metrics["category_breakdown"] = category_breakdown
     
     print(f"\n{'='*60}")
-    print(f"EVALUATION COMPLETE")
+    print(f"EVALUATION COMPLETE (wall time: {eval_elapsed:.1f}s)")
     print(f"{'='*60}")
     print(f"Total cases: {metrics['total_cases']}")
     print(f"Correct: {metrics['correct']}")
@@ -246,6 +267,7 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
     print(f"Parse errors: {metrics['parse_errors']}")
     print(f"Accuracy: {metrics['accuracy']:.2%}")
     print(f"Avg time per case: {metrics['avg_time_per_case']:.2f}s")
+    print(f"Wall-clock time: {eval_elapsed:.1f}s ({eval_elapsed/60:.1f} min)")
     print(f"\nPer-category breakdown:")
     for cat in ["True", "False", "Uncertain"]:
         if cat in category_breakdown:
