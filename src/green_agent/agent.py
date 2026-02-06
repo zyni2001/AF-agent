@@ -222,6 +222,21 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
     metrics["accuracy"] = metrics["correct"] / metrics["total_cases"] if metrics["total_cases"] > 0 else 0.0
     metrics["avg_time_per_case"] = metrics["total_time"] / metrics["total_cases"] if metrics["total_cases"] > 0 else 0.0
     
+    # Per-category breakdown (True / False / Uncertain)
+    category_breakdown = {}
+    for r in metrics["results"]:
+        cat = r["expected"]  # "True", "False", or "Uncertain"
+        if cat not in category_breakdown:
+            category_breakdown[cat] = {"correct": 0, "total": 0}
+        category_breakdown[cat]["total"] += 1
+        if r["correct"]:
+            category_breakdown[cat]["correct"] += 1
+    # Compute per-category accuracy
+    for cat in category_breakdown:
+        cb = category_breakdown[cat]
+        cb["accuracy"] = round(cb["correct"] / cb["total"] * 100, 2) if cb["total"] > 0 else 0.0
+    metrics["category_breakdown"] = category_breakdown
+    
     print(f"\n{'='*60}")
     print(f"EVALUATION COMPLETE")
     print(f"{'='*60}")
@@ -231,6 +246,11 @@ async def evaluate_white_agent_on_folio(white_agent_url: str, max_examples: int 
     print(f"Parse errors: {metrics['parse_errors']}")
     print(f"Accuracy: {metrics['accuracy']:.2%}")
     print(f"Avg time per case: {metrics['avg_time_per_case']:.2f}s")
+    print(f"\nPer-category breakdown:")
+    for cat in ["True", "False", "Uncertain"]:
+        if cat in category_breakdown:
+            cb = category_breakdown[cat]
+            print(f"  {cat:>9s}: {cb['correct']}/{cb['total']} = {cb['accuracy']:.2f}%")
     print(f"{'='*60}\n")
     
     return metrics
@@ -360,6 +380,8 @@ class FolioGreenAgentExecutor(AgentExecutor):
             
             # Structure results for this participant
             # Use 'id' and 'score' to match default AgentBeats query format
+            # Per-category breakdown for the report table
+            cat_breakdown = metrics.get('category_breakdown', {})
             participant_result = {
                 "id": agent_name,  # Required by default AgentBeats query
                 "score": round(metrics['accuracy'] * 100, 2),  # Required by default AgentBeats query
@@ -373,11 +395,29 @@ class FolioGreenAgentExecutor(AgentExecutor):
                 "parse_errors": metrics['parse_errors'],
                 "time_used": round(metrics['total_evaluation_time'], 2),
                 "avg_time_per_case": round(metrics['avg_time_per_case'], 2),
-                "max_score": metrics['total_cases']
+                "max_score": metrics['total_cases'],
+                # Per-category breakdown (True / False / Uncertain)
+                "true_correct": cat_breakdown.get("True", {}).get("correct", 0),
+                "true_total": cat_breakdown.get("True", {}).get("total", 0),
+                "true_accuracy": cat_breakdown.get("True", {}).get("accuracy", 0.0),
+                "false_correct": cat_breakdown.get("False", {}).get("correct", 0),
+                "false_total": cat_breakdown.get("False", {}).get("total", 0),
+                "false_accuracy": cat_breakdown.get("False", {}).get("accuracy", 0.0),
+                "uncertain_correct": cat_breakdown.get("Uncertain", {}).get("correct", 0),
+                "uncertain_total": cat_breakdown.get("Uncertain", {}).get("total", 0),
+                "uncertain_accuracy": cat_breakdown.get("Uncertain", {}).get("accuracy", 0.0),
             }
             all_results.append(participant_result)
             
             # Build human-readable text for this participant
+            # Build per-category summary lines
+            cat_lines = []
+            for cat in ["True", "False", "Uncertain"]:
+                cb = cat_breakdown.get(cat, {})
+                if cb:
+                    cat_lines.append(f"    {cat:>9s}: {cb.get('correct',0)}/{cb.get('total',0)} = {cb.get('accuracy',0):.2f}%")
+            cat_summary = "\n".join(cat_lines)
+            
             result_texts.append(f"""
 Agent: {agent_name}
   • Total Cases: {metrics['total_cases']}
@@ -385,6 +425,8 @@ Agent: {agent_name}
   • Incorrect: {metrics['incorrect']}
   • Parse Errors: {metrics['parse_errors']}
   • Accuracy: {metrics['accuracy']:.2%}
+  • Per-category:
+{cat_summary}
   • Avg Time/Case: {metrics['avg_time_per_case']:.2f}s
   • Total Time: {metrics['total_evaluation_time']:.2f}s
 """)
