@@ -11,6 +11,7 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 COPY main.py ./
 COPY run.sh ./
+COPY entrypoint.sh ./
 
 # Copy data directory
 COPY data/ ./data/
@@ -33,9 +34,9 @@ ENV AGENT_ROLE=green
 ENV AGENT_PORT=9001
 ENV PYTHONUNBUFFERED=1
 
-# Make run.sh executable
-RUN chmod +x run.sh
+# Make scripts executable
+RUN chmod +x run.sh entrypoint.sh
 
-# Use AgentBeats controller (calls run.sh internally)
-# ENTRYPOINT so docker-compose args (--host, --port, --card-url) are appended
-ENTRYPOINT ["agentbeats", "run_ctrl"]
+# entrypoint.sh translates docker-compose args (--host, --port, --card-url)
+# into env vars (HOST, PORT, CLOUDRUN_HOST) then calls agentbeats run_ctrl
+ENTRYPOINT ["./entrypoint.sh"]
