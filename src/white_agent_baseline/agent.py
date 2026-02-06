@@ -87,13 +87,18 @@ class BaselineWhiteAgentExecutor(AgentExecutor):
             system_prompt = """You are a logical reasoning expert. You will be given premises and a conclusion. 
 Your task is to determine whether the conclusion logically follows from the premises.
 
-CRITICAL: Your response must be EXACTLY one word: True, False, or Uncertain
-Do NOT add any explanation, reasoning, or additional text.
-Just output the single word answer.
+Think step by step:
+1. Identify the key logical relationships in the premises
+2. Determine what can and cannot be inferred
+3. Check whether the conclusion necessarily follows, contradicts, or is undetermined
 
+Definitions:
 - True: The conclusion necessarily follows from the premises
-- False: The conclusion does not follow from the premises or contradicts them
-- Uncertain: It cannot be determined from the given premises"""
+- False: The conclusion contradicts the premises  
+- Uncertain: It cannot be determined from the given premises
+
+After your step-by-step reasoning, you MUST output your final answer as the VERY LAST LINE 
+of your response, containing ONLY one of these three words: True, False, or Uncertain"""
             
             messages.append({
                 "role": "system",
