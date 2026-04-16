@@ -19,6 +19,43 @@ def parse_premises(premises_fol: str) -> List[str]:
     return formulas
 
 
+def _resolve_validation_dataset_path() -> str:
+    """Resolve which validation split to use.
+
+    Supported environment variables:
+    - FOLIO_DATASET_PATH: absolute or relative path to a CSV file
+    - FOLIO_DATASET_VARIANT: one of {"refined", "cleaned", "original", "dev"}
+    """
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
+
+    explicit_path = os.environ.get("FOLIO_DATASET_PATH")
+    if explicit_path:
+        dataset_path = os.path.abspath(explicit_path)
+        if os.path.exists(dataset_path):
+            return dataset_path
+        raise FileNotFoundError(f"FOLIO_DATASET_PATH does not exist: {dataset_path}")
+
+    variant = os.environ.get("FOLIO_DATASET_VARIANT", "refined").strip().lower()
+    variant_to_path = {
+        "refined": os.path.join(project_root, "data", "folio-wiki", "cleaned-FOLIO-by-yifeng.csv"),
+        "cleaned": os.path.join(project_root, "data", "folio-wiki", "cleaned-FOLIO-by-yifeng.csv"),
+        "original": os.path.join(project_root, "data", "folio-wiki", "dev.csv"),
+        "dev": os.path.join(project_root, "data", "folio-wiki", "dev.csv"),
+    }
+
+    if variant not in variant_to_path:
+        raise ValueError(
+            f"Unsupported FOLIO_DATASET_VARIANT={variant!r}. "
+            "Use one of: refined, cleaned, original, dev."
+        )
+
+    dataset_path = os.path.abspath(variant_to_path[variant])
+    if not os.path.exists(dataset_path):
+        raise FileNotFoundError(f"Resolved dataset path does not exist: {dataset_path}")
+    return dataset_path
+
+
 def load_validation_dataset(max_examples: Optional[int] = None) -> pd.DataFrame:
     """Load FOLIO validation dataset.
     
@@ -29,32 +66,7 @@ def load_validation_dataset(max_examples: Optional[int] = None) -> pd.DataFrame:
         DataFrame with columns: story_id, premises, premises-FOL, conclusion, 
                                  conclusion-FOL, label, example_id
     """
-    # Find the dataset file (relative to this module or absolute path)
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Try multiple possible locations
-    possible_paths = [
-        # Docker/deployed location (relative to project root)
-        os.path.join(current_dir, '..', '..', 'data', 'folio-wiki', 'cleaned-FOLIO-by-yifeng.csv'),
-        # os.path.join(current_dir, '..', '..', 'data', 'folio-wiki', 'dev.csv'),
-        # Relative to folio-benchmark/
-        # os.path.join(current_dir, '..', '..', '..', 'folio_correction', 'validation', 'original_dataset.csv'),
-        # Absolute path (fallback)
-        # '/home/argustest/logic-reasoning-workspace/zhiyu/folio-agent/folio_correction/validation/original_dataset.csv',
-    ]
-    
-    dataset_path = None
-    for path in possible_paths:
-        abs_path = os.path.abspath(path)
-        if os.path.exists(abs_path):
-            dataset_path = abs_path
-            break
-    
-    if dataset_path is None:
-        raise FileNotFoundError(
-            f"Could not find FOLIO validation dataset. Tried:\n" + 
-            "\n".join(f"  - {p}" for p in possible_paths)
-        )
+    dataset_path = _resolve_validation_dataset_path()
     
     print(f"Loading FOLIO validation dataset from: {dataset_path}")
     df = pd.read_csv(dataset_path)
@@ -126,4 +138,3 @@ CONCLUSION-FOL:
 Your FOL conversion:"""
     
     return text
-

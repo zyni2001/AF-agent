@@ -15,26 +15,34 @@ from a2a.types import AgentSkill, AgentCard, AgentCapabilities
 from a2a.utils import new_agent_text_message
 from litellm import completion
 from litellm.exceptions import RateLimitError
+from src.my_util import build_litellm_kwargs, get_api_keys_from_env, use_vertex_ai
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-
-# Get Gemini API keys from environment
-def get_api_keys_from_env():
-    """Load API keys from GEMINI_API_KEY environment variable."""
-    api_key = os.environ.get('GEMINI_API_KEY', '')
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is not set")
-    return [key.strip() for key in api_key.split(',') if key.strip()]
-
-GEMINI_API_KEYS = get_api_keys_from_env()
+GEMINI_API_KEYS = None
 current_key_index = 0
+
+
+def _verbose_logging() -> bool:
+    value = os.environ.get("FOLIO_VERBOSE_LOGGING", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _ensure_api_keys_loaded():
+    global GEMINI_API_KEYS
+    if GEMINI_API_KEYS is None:
+        if use_vertex_ai():
+            GEMINI_API_KEYS = []
+        else:
+            GEMINI_API_KEYS = get_api_keys_from_env()
+    return GEMINI_API_KEYS
 
 
 def get_next_api_key():
     """Get next API key in rotation."""
     global current_key_index
+    _ensure_api_keys_loaded()
     key = GEMINI_API_KEYS[current_key_index]
     current_key_index = (current_key_index + 1) % len(GEMINI_API_KEYS)
     return key
@@ -72,9 +80,10 @@ class AutoformWhiteAgentExecutor(AgentExecutor):
             # Get user input
             user_input = context.get_user_input()
             
-            print(f"\n{'='*60}")
-            print(f"Autoform agent: Processing request")
-            print(f"{'='*60}\n")
+            if _verbose_logging():
+                print(f"\n{'='*60}")
+                print(f"Autoform agent: Processing request")
+                print(f"{'='*60}\n")
             
             # Self-refinement parameters
             max_repairs = 3
@@ -158,9 +167,10 @@ Now generate the code for the following problem:"""
                     if execution_error is None:
                         execution_error = "Previous code execution failed"
                     
-                    print(f"\n{'='*60}")
-                    print(f"Repair attempt {repair_attempt}/{max_repairs}")
-                    print(f"{'='*60}\n")
+                    if _verbose_logging():
+                        print(f"\n{'='*60}")
+                        print(f"Repair attempt {repair_attempt}/{max_repairs}")
+                        print(f"{'='*60}\n")
                     
                     # Create repair prompt
                     repair_system_prompt = """You are an expert in fixing Python Z3 code syntax errors.
@@ -207,37 +217,43 @@ Please generate the FIXED Z3 Python code:"""
                 
                 # Call LLM to generate/fix Z3 code
                 if is_repair:
-                    print("Generating fixed Z3 Python code...")
+                    if _verbose_logging():
+                        print("Generating fixed Z3 Python code...")
                 else:
-                    print("Generating Z3 Python code...")
+                    if _verbose_logging():
+                        print("Generating Z3 Python code...")
                 
                 response = None
                 last_error = None
                 max_rate_limit_retries = 5
                 base_delay = 7  # Base delay in seconds (to stay under 10 req/min)
+                api_keys = _ensure_api_keys_loaded()
                 
                 for rate_retry in range(max_rate_limit_retries):
-                    for api_attempt in range(len(GEMINI_API_KEYS)):
+                    attempts = max(1, len(api_keys))
+                    for api_attempt in range(attempts):
                         try:
-                            api_key = get_next_api_key()
-                            os.environ['GEMINI_API_KEY'] = api_key
-                            
-                            response = completion(
-                                messages=messages,
-                                model="gemini/gemini-2.5-flash",
-                                api_key=api_key,
-                                temperature=0.0
-                            )
+                            litellm_kwargs = build_litellm_kwargs(messages=messages, temperature=0.0)
+                            if use_vertex_ai():
+                                response = completion(**litellm_kwargs)
+                            else:
+                                api_key = get_next_api_key()
+                                os.environ['GEMINI_API_KEY'] = api_key
+                                litellm_kwargs["api_key"] = api_key
+                                response = completion(**litellm_kwargs)
                             break
                         except RateLimitError as e:
                             last_error = e
                             retry_delay = base_delay * (2 ** rate_retry)
-                            print(f"Autoform agent: Rate limited (retry {rate_retry + 1}/{max_rate_limit_retries}), waiting {retry_delay}s...")
+                            if _verbose_logging():
+                                print(f"Autoform agent: Rate limited (retry {rate_retry + 1}/{max_rate_limit_retries}), waiting {retry_delay}s...")
                             await asyncio.sleep(retry_delay)
                             break  # Break inner loop to retry with backoff
                         except Exception as e:
                             last_error = e
-                            print(f"Autoform agent: API call failed (key {api_attempt + 1}/{len(GEMINI_API_KEYS)}): {type(e).__name__}: {str(e)[:100]}")
+                            provider = "vertex" if use_vertex_ai() else f"key {api_attempt + 1}/{attempts}"
+                            if _verbose_logging():
+                                print(f"Autoform agent: API call failed ({provider}): {type(e).__name__}: {str(e)[:100]}")
                             continue
                     
                     if response is not None:
@@ -266,13 +282,17 @@ Please generate the FIXED Z3 Python code:"""
                     z3_code = z3_code.split("```")[1].split("```")[0].strip()
                 
                 if is_repair:
-                    print(f"\nFixed Z3 code ({len(z3_code)} chars)")
+                    if _verbose_logging():
+                        print(f"\nFixed Z3 code ({len(z3_code)} chars)")
                 else:
-                    print(f"\nGenerated Z3 code ({len(z3_code)} chars)")
-                print(f"First 200 chars: {z3_code[:200]}...\n")
+                    if _verbose_logging():
+                        print(f"\nGenerated Z3 code ({len(z3_code)} chars)")
+                if _verbose_logging():
+                    print(f"First 200 chars: {z3_code[:200]}...\n")
                 
                 # Execute the Z3 code
-                print("Executing Z3 code...")
+                if _verbose_logging():
+                    print("Executing Z3 code...")
                 
                 temp_file = None
                 try:
@@ -281,7 +301,7 @@ Please generate the FIXED Z3 Python code:"""
                         temp_file = f.name
                     
                     result = subprocess.run(
-                        ['python', temp_file],
+                        [sys.executable, temp_file],
                         capture_output=True,
                         text=True,
                         timeout=60  # 60 second timeout
@@ -290,11 +310,14 @@ Please generate the FIXED Z3 Python code:"""
                     output = result.stdout.strip()
                     stderr = result.stderr.strip()
                     
-                    print(f"Execution return code: {result.returncode}")
+                    if _verbose_logging():
+                        print(f"Execution return code: {result.returncode}")
                     if output:
-                        print(f"Stdout: {output[:200]}")
+                        if _verbose_logging():
+                            print(f"Stdout: {output[:200]}")
                     if stderr:
-                        print(f"Stderr: {stderr[:500]}")
+                        if _verbose_logging():
+                            print(f"Stderr: {stderr[:500]}")
                     
                     # If execution succeeded, parse result and exit loop
                     if result.returncode == 0:
@@ -308,9 +331,10 @@ Please generate the FIXED Z3 Python code:"""
                                 answer = line
                                 break
                         
-                        print(f"\n{'='*60}")
-                        print(f"Final answer: {answer}")
-                        print(f"{'='*60}\n")
+                        if _verbose_logging():
+                            print(f"\n{'='*60}")
+                            print(f"Final answer: {answer}")
+                            print(f"{'='*60}\n")
                         
                         # Send response
                         await event_queue.enqueue_event(
@@ -320,19 +344,22 @@ Please generate the FIXED Z3 Python code:"""
                     
                     # Execution failed - prepare for repair
                     execution_error = stderr if stderr else f"Execution failed with return code {result.returncode}"
-                    print(f"Warning: Z3 code execution failed with return code {result.returncode}")
-                    print(f"Error: {execution_error[:500]}")
+                    if _verbose_logging():
+                        print(f"Warning: Z3 code execution failed with return code {result.returncode}")
+                        print(f"Error: {execution_error[:500]}")
                     
                     # If we've exhausted repair attempts, return Uncertain
                     if repair_attempt >= max_repairs:
-                        print(f"\nMax repair attempts ({max_repairs}) reached. Returning Uncertain.")
+                        if _verbose_logging():
+                            print(f"\nMax repair attempts ({max_repairs}) reached. Returning Uncertain.")
                         await event_queue.enqueue_event(
                             new_agent_text_message("Uncertain", context_id=context.context_id)
                         )
                         return
                     
                     # Continue to next repair attempt
-                    print(f"\nAttempting repair {repair_attempt + 1}/{max_repairs}...")
+                    if _verbose_logging():
+                        print(f"\nAttempting repair {repair_attempt + 1}/{max_repairs}...")
                     
                 finally:
                     # Clean up temp file
@@ -340,7 +367,8 @@ Please generate the FIXED Z3 Python code:"""
                         os.unlink(temp_file)
             
             # If we somehow exit the loop without returning, return Uncertain
-            print("ERROR: Exited refinement loop without result")
+            if _verbose_logging():
+                print("ERROR: Exited refinement loop without result")
             await event_queue.enqueue_event(
                 new_agent_text_message("Uncertain", context_id=context.context_id)
             )
@@ -413,4 +441,4 @@ def start_autoform_white_agent(host="localhost", port=9003):
     
     starlette_app.routes.append(Route("/status", health_check))
 
-    uvicorn.run(starlette_app, host=host, port=port)
+    uvicorn.run(starlette_app, host=host, port=port, log_level="warning", access_log=False)

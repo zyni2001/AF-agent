@@ -14,6 +14,22 @@ from src.white_agent_autoform.agent import start_autoform_white_agent
 from src.my_util import my_a2a
 
 
+def _build_eval_request(agent_name: str, agent_url: str, max_examples: int | None) -> str:
+    payload = {
+        "participants": [
+            {
+                "name": agent_name,
+                "agent_id": agent_name,
+                "endpoint": agent_url,
+            }
+        ],
+        "config": {},
+    }
+    if max_examples is not None:
+        payload["config"]["max_examples"] = max_examples
+    return json.dumps(payload)
+
+
 async def launch_evaluation(max_examples: int = None, test_both: bool = True):
     """Launch complete evaluation workflow.
     
@@ -82,17 +98,8 @@ async def launch_evaluation(max_examples: int = None, test_both: bool = True):
         print(f"URL: {agent_url}")
         print(f"{'='*70}\n")
         
-        # Prepare evaluation task
-        max_examples_tag = f"<max_examples>{max_examples}</max_examples>" if max_examples else ""
-        task_text = f"""Evaluate the white agent on FOLIO validation dataset.
-
-<white_agent_url>
-{agent_url}
-</white_agent_url>
-{max_examples_tag}
-
-Please run the evaluation and report results.
-"""
+        # Prepare evaluation task with participant metadata so checkpoint files stay distinct.
+        task_text = _build_eval_request(agent_name, agent_url, max_examples)
         
         print("Sending evaluation request to green agent...")
         try:
@@ -154,4 +161,3 @@ async def launch_full_evaluation():
     print("FULL EVALUATION MODE - All validation examples, both agents")
     print("="*70 + "\n")
     await launch_evaluation(max_examples=None, test_both=True)
-

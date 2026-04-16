@@ -13,16 +13,7 @@ from a2a.types import AgentSkill, AgentCard, AgentCapabilities
 from a2a.utils import new_agent_text_message
 from litellm import completion
 from litellm.exceptions import RateLimitError
-
-
-# Get Gemini API keys from environment (comma-separated for rotation)
-def get_api_keys_from_env():
-    """Load API keys from GEMINI_API_KEY environment variable."""
-    api_key = os.environ.get('GEMINI_API_KEY', '')
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is not set")
-    # Support comma-separated keys for rotation
-    return [key.strip() for key in api_key.split(',') if key.strip()]
+from src.my_util import build_litellm_kwargs, get_api_keys_from_env, use_vertex_ai
 
 # Lazy initialization - don't load API keys at module import time
 # This prevents import errors when the module is imported before environment is set up
@@ -34,7 +25,10 @@ def _ensure_api_keys_loaded():
     """Ensure API keys are loaded (lazy initialization)."""
     global _gemini_api_keys
     if _gemini_api_keys is None:
-        _gemini_api_keys = get_api_keys_from_env()
+        if use_vertex_ai():
+            _gemini_api_keys = []
+        else:
+            _gemini_api_keys = get_api_keys_from_env()
     return _gemini_api_keys
 
 
@@ -118,16 +112,16 @@ of your response, containing ONLY one of these three words: True, False, or Unce
         base_delay = 7  # Base delay in seconds (to stay under 10 req/min)
         
         for retry in range(max_retries):
-            for key_attempt in range(len(api_keys)):
+            attempts = max(1, len(api_keys))
+            for key_attempt in range(attempts):
                 try:
-                    api_key = get_next_api_key()
-                    
-                    response = completion(
-                        messages=messages,
-                        model="gemini/gemini-2.5-flash",
-                        temperature=0.0,
-                        api_key=api_key,
-                    )
+                    litellm_kwargs = build_litellm_kwargs(messages=messages, temperature=0.0)
+                    if use_vertex_ai():
+                        response = completion(**litellm_kwargs)
+                    else:
+                        api_key = get_next_api_key()
+                        litellm_kwargs["api_key"] = api_key
+                        response = completion(**litellm_kwargs)
                     break
                 except RateLimitError as e:
                     last_error = e
@@ -138,7 +132,8 @@ of your response, containing ONLY one of these three words: True, False, or Unce
                     break  # Break inner loop to retry with backoff
                 except Exception as e:
                     last_error = e
-                    print(f"Baseline agent: API call failed (key {key_attempt + 1}/{len(api_keys)}): {type(e).__name__}: {str(e)[:100]}")
+                    provider = "vertex" if use_vertex_ai() else f"key {key_attempt + 1}/{attempts}"
+                    print(f"Baseline agent: API call failed ({provider}): {type(e).__name__}: {str(e)[:100]}")
                     continue
             
             if response is not None:
@@ -241,5 +236,4 @@ def start_baseline_white_agent(host="localhost", port=9002):
     print("Agent card endpoint: {}/.well-known/agent-card.json".format(url))
     print("=" * 60)
     
-    uvicorn.run(starlette_app, host=host, port=port, log_level="info")
-
+    uvicorn.run(starlette_app, host=host, port=port, log_level="warning", access_log=False)

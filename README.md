@@ -48,6 +48,34 @@ export GEMINI_API_KEY='your_api_key_here'
 python main.py launch --max 10 --both
 ```
 
+### Local Testing with Vertex AI
+
+If you want to use Gemini through Vertex AI instead of the Gemini Developer API:
+
+```bash
+# 1. Install and configure Google Cloud CLI
+gcloud init
+gcloud auth application-default login
+
+# 2. Set Vertex AI environment variables
+export GOOGLE_GENAI_USE_VERTEXAI=True
+export GOOGLE_CLOUD_PROJECT=your_project_id
+export GOOGLE_CLOUD_LOCATION=global
+
+# Optional aliases/overrides used by this repo
+export VERTEXAI_PROJECT="$GOOGLE_CLOUD_PROJECT"
+export VERTEXAI_LOCATION="$GOOGLE_CLOUD_LOCATION"
+export VERTEXAI_GEMINI_MODEL="vertex_ai/gemini-2.5-flash"
+
+# 3. Install project dependencies
+uv sync
+
+# 4. Run the benchmark
+python main.py launch --max 10 --both
+```
+
+When `GOOGLE_GENAI_USE_VERTEXAI=True` is set, both white agents automatically route LiteLLM requests through Vertex AI and use ADC instead of `GEMINI_API_KEY`.
+
 ### Deploy to AgentBeats
 
 ```bash
@@ -68,12 +96,17 @@ python main.py launch --max 10 --both
 Create a `.env` file:
 
 ```bash
-# Gemini API Key (required)
+# Gemini Developer API key (required if not using Vertex AI)
 GEMINI_API_KEY=your_api_key_here
 
 # AgentBeats configuration (for deployment)
 HOST=localhost
 AGENT_PORT=9001
+
+# Vertex AI configuration (optional alternative to GEMINI_API_KEY)
+GOOGLE_GENAI_USE_VERTEXAI=True
+GOOGLE_CLOUD_PROJECT=your_project_id
+GOOGLE_CLOUD_LOCATION=global
 ```
 
 Get your API key from: https://aistudio.google.com/app/apikey

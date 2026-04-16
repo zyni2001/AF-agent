@@ -1,6 +1,7 @@
 import httpx
 import asyncio
 import uuid
+import os
 
 
 from a2a.client import A2ACardResolver, A2AClient
@@ -100,6 +101,7 @@ async def send_message_with_card(
     
     This is optimized for batch/parallel evaluation where the card is resolved once.
     """
+    timeout = float(os.environ.get("FOLIO_A2A_TIMEOUT_SECONDS", timeout))
     if httpx_client is None:
         httpx_client = httpx.AsyncClient(timeout=timeout)
     client = A2AClient(httpx_client=httpx_client, agent_card=card)
